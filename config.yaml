@@ -10,13 +10,14 @@ discord:
 # 监控配置
 monitor:
   # 检查间隔时间（秒）
-  check_interval: 1
+  check_interval: 30
   # 请求间隔时间（秒）
-  request_delay: 1
+  request_delay: 5
   # 允许监控的域名列表
   allowed_domains:
     - "popmart.com"
     - "pop-mart.com"
+    - "www.popmart.com"
 
 # 存储配置
 storage:
@@ -26,7 +27,7 @@ storage:
 # 日志配置
 logging:
   # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: "INFO"
+  level: "DEBUG"
   # 日志文件路径
   file: "logs/bot.log"
   # 是否在控制台输出日志

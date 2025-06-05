@@ -29,7 +29,8 @@ class ProductMonitor:
         'buy now',
         'purchase',
         'checkout',
-        'in stock'
+        'in stock',
+        'add to shopping bag'
     ]
     
     # 售罄状态的关键词
@@ -38,7 +39,9 @@ class ProductMonitor:
         'out of stock',
         'currently unavailable',
         'not available',
-        'notify me when available'
+        'notify me when available',
+        'coming soon',
+        'temporarily unavailable'
     ]
 
     @staticmethod
@@ -335,7 +338,7 @@ class ProductMonitor:
         """
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://www.popmart.com/',
@@ -350,65 +353,90 @@ class ProductMonitor:
                 'Upgrade-Insecure-Requests': '1'
             }
             
-            # 从HTML获取商品信息
-            async with session.get(url, headers=headers) as html_response:
-                if html_response.status == 200:
-                    html = await html_response.text()
+            logger.info(f"开始检查商品 URL: {url}")
+            
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    # 尝试从Next.js数据中获取信息
-                    next_data = soup.find('script', id='__NEXT_DATA__')
-                    if next_data:
-                        try:
-                            data = json.loads(next_data.string)
-                            product_data = data.get('props', {}).get('pageProps', {}).get('product', {})
-                            if product_data:
-                                # 检查库存状态
-                                stock_status = product_data.get('stock_status', '')
-                                if stock_status:
-                                    return stock_status.lower() == 'in_stock'
-                                
-                                # 检查其他可能的库存字段
-                                inventory = product_data.get('inventory', {})
-                                if inventory:
-                                    available_quantity = inventory.get('available_quantity', 0)
-                                    return available_quantity > 0
-                                
-                                # 检查可购买状态
-                                purchasable = product_data.get('purchasable', False)
-                                if purchasable is not None:
-                                    return bool(purchasable)
-                        except:
-                            pass
+                    # 检查所有按钮和链接
+                    buttons = soup.find_all(['button', 'a', 'div'])
+                    logger.debug(f"找到 {len(buttons)} 个可能的按钮/链接元素")
                     
-                    # 从JSON-LD获取信息
-                    json_ld = soup.find('script', type='application/ld+json')
-                    if json_ld:
+                    for button in buttons:
+                        # 获取按钮的所有文本内容
+                        button_text = button.get_text(strip=True, separator=' ').lower()
+                        button_class = ' '.join(button.get('class', [])).lower()
+                        button_id = button.get('id', '').lower()
+                        
+                        # 记录按钮详细信息
+                        if button_text:
+                            logger.debug(f"按钮文本: '{button_text}'")
+                            logger.debug(f"按钮类名: '{button_class}'")
+                            logger.debug(f"按钮ID: '{button_id}'")
+                            
+                            # 检查是否包含可购买关键词
+                            for keyword in ProductMonitor.AVAILABLE_KEYWORDS:
+                                if keyword.lower() in button_text:
+                                    logger.info(f"找到可购买关键词: '{keyword}' in '{button_text}'")
+                                    
+                                    # 检查是否同时包含售罄关键词
+                                    has_soldout = any(soldout.lower() in button_text or soldout.lower() in button_class 
+                                                    for soldout in ProductMonitor.SOLD_OUT_KEYWORDS)
+                                    
+                                    if not has_soldout:
+                                        # 检查按钮是否被禁用
+                                        is_disabled = (
+                                            button.get('disabled') is not None or
+                                            'disabled' in button_class or
+                                            'disabled' in button_id or
+                                            'sold-out' in button_class or
+                                            'soldout' in button_class
+                                        )
+                                        
+                                        if not is_disabled:
+                                            logger.info(f"商品可购买: 找到有效的购买按钮 '{button_text}'")
+                                            return True
+                                        else:
+                                            logger.info(f"按钮已禁用: '{button_text}'")
+                    
+                    # 如果没有找到可购买按钮，检查页面源代码中的状态
+                    scripts = soup.find_all('script', type='application/json')
+                    for script in scripts:
                         try:
-                            data = json.loads(json_ld.string)
+                            data = json.loads(script.string)
                             if isinstance(data, dict):
-                                availability = data.get('offers', {}).get('availability', '')
-                                if availability:
-                                    return 'instock' in availability.lower()
-                        except:
-                            pass
+                                # 记录找到的所有相关状态
+                                logger.debug(f"找到 JSON 数据: {json.dumps(data, indent=2)}")
+                                
+                                # 检查各种可能的状态字段
+                                stock_status = data.get('stock_status', '')
+                                inventory = data.get('inventory', {})
+                                purchasable = data.get('purchasable', False)
+                                
+                                if stock_status:
+                                    logger.info(f"库存状态: {stock_status}")
+                                if inventory:
+                                    logger.info(f"库存信息: {inventory}")
+                                if purchasable is not None:
+                                    logger.info(f"可购买状态: {purchasable}")
+                                
+                                # 如果找到任何表明可购买的状态
+                                if (stock_status and 'in_stock' in stock_status.lower()) or \
+                                   (inventory and inventory.get('available_quantity', 0) > 0) or \
+                                   purchasable:
+                                    return True
+                        except json.JSONDecodeError:
+                            continue
                     
-                    # 检查是否存在可购买关键词
-                    available = ProductMonitor._text_exists(soup, ProductMonitor.AVAILABLE_KEYWORDS)
-                    
-                    # 检查是否存在售罄关键词
-                    sold_out = ProductMonitor._text_exists(soup, ProductMonitor.SOLD_OUT_KEYWORDS)
-                    
-                    # 记录检查结果
-                    logger.debug(f"URL: {url}, Available keywords found: {available}, Sold out keywords found: {sold_out}")
-                    
-                    # 如果找到可购买关键词且没有找到售罄关键词，则认为商品可购买
-                    return bool(available and not sold_out)
-                
-                logger.warning(f"Failed to fetch {url}, status code: {html_response.status}")
-                return False
+                    logger.warning(f"商品 {url} 可能已售罄: 未找到有效的购买按钮或库存信息")
+                    return False
+                else:
+                    logger.error(f"请求失败: {url}, 状态码: {response.status}")
+                    return None
         except Exception as e:
-            logger.error(f"Error checking {url}: {str(e)}")
+            logger.error(f"检查商品时发生错误 {url}: {str(e)}")
             return None
 
     @staticmethod

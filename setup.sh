@@ -14,33 +14,40 @@ if [ ! -f "main.py" ]; then
     exit 1
 fi
 
-# 创建必要的目录
+# 创建并设置必要的目录
 echo -e "\n${YELLOW}1. 创建必要的目录...${NC}"
 mkdir -p logs data
+chmod 755 logs data
+
+# 初始化数据文件
+echo -e "\n${YELLOW}2. 初始化数据文件...${NC}"
+echo '[]' > data/monitored_items.json
+chmod 644 data/monitored_items.json
 
 # 创建并激活虚拟环境
-echo -e "\n${YELLOW}2. 设置Python虚拟环境...${NC}"
+echo -e "\n${YELLOW}3. 设置Python虚拟环境...${NC}"
 if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 source venv/bin/activate
 
 # 安装依赖
-echo -e "\n${YELLOW}3. 安装Python依赖...${NC}"
+echo -e "\n${YELLOW}4. 安装Python依赖...${NC}"
 pip install -r requirements.txt
 
 # 配置文件检查
-echo -e "\n${YELLOW}4. 检查配置文件...${NC}"
+echo -e "\n${YELLOW}5. 检查配置文件...${NC}"
 if [ ! -f "config.yaml" ]; then
     echo -e "${RED}请注意：需要创建并配置 config.yaml 文件${NC}"
     cp config.example.yaml config.yaml
+    chmod 644 config.yaml
     echo -e "请编辑 config.yaml 文件，设置您的 Discord 令牌和频道 ID"
     echo -e "使用命令：nano config.yaml"
     exit 1
 fi
 
 # 创建监控脚本
-echo -e "\n${YELLOW}5. 创建监控脚本...${NC}"
+echo -e "\n${YELLOW}6. 创建监控脚本...${NC}"
 cat > monitor.sh << 'EOF'
 #!/bin/bash
 
@@ -55,6 +62,15 @@ log() {
 
 # 确保日志目录存在
 mkdir -p logs
+chmod 755 logs
+
+# 确保数据目录和文件存在且有正确的权限
+mkdir -p data
+chmod 755 data
+if [ ! -f "data/monitored_items.json" ]; then
+    echo '[]' > data/monitored_items.json
+fi
+chmod 644 data/monitored_items.json
 
 log "启动监控脚本"
 log "工作目录: $PWD"
@@ -97,6 +113,13 @@ if ! pip freeze | grep -q "discord.py"; then
     exit 1
 fi
 
+# 检查数据文件格式
+log "检查数据文件格式..."
+if ! python -m json.tool data/monitored_items.json > /dev/null 2>&1; then
+    log "警告: 数据文件格式错误，重置为空列表"
+    echo '[]' > data/monitored_items.json
+fi
+
 # 运行Python程序
 while true; do
     log "启动 Python 程序..."
@@ -125,7 +148,7 @@ EOF
 chmod +x monitor.sh
 
 # 设置系统服务
-echo -e "\n${YELLOW}6. 设置系统服务...${NC}"
+echo -e "\n${YELLOW}7. 设置系统服务...${NC}"
 SERVICE_FILE="/etc/systemd/system/popmart-watch.service"
 
 # 检查是否有权限写入服务文件
@@ -165,14 +188,18 @@ RestartPreventExitStatus=0
 WantedBy=multi-user.target
 EOF
 
+# 设置日志文件权限
+touch logs/service.log
+chmod 644 logs/service.log
+
 # 重载服务配置
-echo -e "\n${YELLOW}7. 启动服务...${NC}"
+echo -e "\n${YELLOW}8. 启动服务...${NC}"
 sudo systemctl daemon-reload
 sudo systemctl enable popmart-watch
 sudo systemctl restart popmart-watch
 
 # 检查服务状态
-echo -e "\n${YELLOW}8. 检查服务状态...${NC}"
+echo -e "\n${YELLOW}9. 检查服务状态...${NC}"
 sudo systemctl status popmart-watch
 
 echo -e "\n${GREEN}部署完成！${NC}"
