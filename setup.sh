@@ -48,24 +48,76 @@ cat > monitor.sh << 'EOF'
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# 日志函数
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a logs/monitor.log
+}
+
+# 确保日志目录存在
+mkdir -p logs
+
+log "启动监控脚本"
+log "工作目录: $PWD"
+
+# 检查虚拟环境
+if [ ! -d "venv" ]; then
+    log "错误: 虚拟环境不存在"
+    exit 1
+fi
+
+# 检查配置文件
+if [ ! -f "config.yaml" ]; then
+    log "错误: 配置文件不存在"
+    exit 1
+fi
+
 # 激活虚拟环境
+log "激活虚拟环境"
 source venv/bin/activate
+if [ $? -ne 0 ]; then
+    log "错误: 无法激活虚拟环境"
+    exit 1
+fi
+
+# 检查Python可执行文件
+which python
+if [ $? -ne 0 ]; then
+    log "错误: Python不可用"
+    exit 1
+fi
+
+log "Python版本: $(python --version)"
+log "pip版本: $(pip --version)"
+
+# 检查依赖
+log "检查依赖..."
+pip freeze > logs/requirements_installed.txt
+if ! pip freeze | grep -q "discord.py"; then
+    log "错误: 关键依赖 discord.py 未安装"
+    exit 1
+fi
 
 # 运行Python程序
 while true; do
-    echo "[$(date)] 启动程序..."
-    python main.py
+    log "启动 Python 程序..."
     
-    EXIT_CODE=$?
-    echo "[$(date)] 程序退出，退出码: $EXIT_CODE"
+    # 将Python程序的输出也记录到日志文件
+    python main.py 2>&1 | tee -a logs/app.log
+    EXIT_CODE=${PIPESTATUS[0]}
+    
+    log "程序退出，退出码: $EXIT_CODE"
     
     # 如果是正常退出（退出码为0），则不重启
     if [ $EXIT_CODE -eq 0 ]; then
-        echo "[$(date)] 程序正常退出，不重启"
+        log "程序正常退出，不重启"
         break
     fi
     
-    echo "[$(date)] 程序异常退出，5秒后重启..."
+    # 记录错误信息
+    log "程序异常退出，最后100行日志："
+    tail -n 100 logs/app.log >> logs/monitor.log
+    
+    log "5秒后重启..."
     sleep 5
 done
 EOF
