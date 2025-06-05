@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from typing import List, Dict, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class MonitorStore:
             logger.info("重置为空列表并备份原文件")
             # 如果文件存在但格式错误，创建备份
             if os.path.exists(self.file_path):
-                backup_path = f"{self.file_path}.bak"
+                backup_path = f"{self.file_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
                 os.rename(self.file_path, backup_path)
             self.items = []
             self.save_items()
@@ -74,20 +75,28 @@ class MonitorStore:
         添加监控项目
         
         Args:
-            item: 监控项目信息
+            item: 监控项目信息，必须包含 id 字段
             
         Returns:
             bool: 是否添加成功
         """
         try:
-            # 检查是否已存在
-            if any(x.get('id') == item.get('id') for x in self.items):
-                logger.warning(f"监控项目已存在: {item.get('id')}")
+            if not item.get('id'):
+                logger.error("监控项目缺少ID")
                 return False
+                
+            # 检查是否已存在
+            if any(x.get('id') == item['id'] for x in self.items):
+                logger.warning(f"监控项目已存在: {item['id']}")
+                return False
+            
+            # 添加状态字段
+            item['status'] = 'unknown'
+            item['added_at'] = datetime.now().isoformat()
             
             self.items.append(item)
             self.save_items()
-            logger.info(f"已添加监控项目: {item.get('id')}")
+            logger.info(f"已添加监控项目: {item['id']}")
             return True
         except Exception as e:
             logger.error(f"添加监控项目时出错: {str(e)}")
@@ -123,6 +132,21 @@ class MonitorStore:
         获取所有监控项目
         
         Returns:
-            List[Dict[str, Any]]: 监控项目列表
+            List[Dict[str, Any]]: 监控项目列表的副本
         """
-        return self.items.copy()  # 返回副本以防止外部修改 
+        return self.items.copy()  # 返回副本以防止外部修改
+        
+    def get_item_by_id(self, item_id: str) -> Dict[str, Any]:
+        """
+        根据ID获取监控项目
+        
+        Args:
+            item_id: 监控项目ID
+            
+        Returns:
+            Dict[str, Any]: 监控项目信息，如果不存在则返回空字典
+        """
+        for item in self.items:
+            if item.get('id') == item_id:
+                return item.copy()  # 返回副本以防止外部修改
+        return {} 

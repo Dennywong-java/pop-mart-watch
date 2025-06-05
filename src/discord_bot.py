@@ -6,7 +6,7 @@ import logging
 import discord
 from discord.ext import commands
 import aiohttp
-from typing import Optional
+from typing import Optional, Dict
 from urllib.parse import urlparse
 from datetime import datetime
 
@@ -33,85 +33,6 @@ class MonitorBot(commands.Bot):
         # 注册命令
         self.setup_commands()
 
-    async def send_notification(self, channel: discord.TextChannel, url: str, status_change: str):
-        """
-        发送商品状态变化通知
-        
-        Args:
-            channel: Discord 频道
-            url: 商品URL
-            status_change: 状态变化类型 ('available' 或 'sold_out')
-        """
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 获取商品信息
-        async with aiohttp.ClientSession() as session:
-            product_info = await self.monitor.get_product_info(url, session)
-        
-        if status_change == 'available':
-            embed = discord.Embed(
-                title="🎉 商品已上架！",
-                description=f"发现时间：{current_time}\n\n**商品链接**：\n{url}",
-                color=discord.Color.green(),
-                timestamp=datetime.now()
-            )
-            
-            # 如果有商品标题，添加到通知中
-            if product_info.get('title'):
-                embed.add_field(
-                    name="商品名称",
-                    value=product_info['title'],
-                    inline=False
-                )
-            
-            embed.add_field(
-                name="操作提示",
-                value="点击上方链接立即购买！",
-                inline=False
-            )
-            # 添加提醒
-            embed.add_field(
-                name="⚠️ 注意",
-                value="商品可能很快售罄，请尽快下单",
-                inline=False
-            )
-            # 添加机器人状态
-            embed.set_footer(text=f"监控间隔: {config.check_interval}秒 | 持续监控中...")
-            
-            # 如果有商品图片，添加到通知中
-            if product_info.get('image_url'):
-                embed.set_image(url=product_info['image_url'])
-            
-            # 同时发送普通消息以确保通知（可以@用户）
-            await channel.send(
-                content="@here 🔔 检测到商品可购买！请尽快查看！",
-                embed=embed
-            )
-            logger.info(f"Sent availability notification for {url}")
-            
-        elif status_change == 'sold_out':
-            embed = discord.Embed(
-                title="❌ 商品已售罄",
-                description=f"检测时间：{current_time}\n\n**商品链接**：\n{url}",
-                color=discord.Color.red(),
-                timestamp=datetime.now()
-            )
-            
-            # 如果有商品标题，添加到通知中
-            if product_info.get('title'):
-                embed.add_field(
-                    name="商品名称",
-                    value=product_info['title'],
-                    inline=False
-                )
-            
-            # 如果有商品图片，添加到通知中
-            if product_info.get('image_url'):
-                embed.set_image(url=product_info['image_url'])
-            
-            await channel.send(embed=embed)
-            logger.info(f"Sent sold out notification for {url}")
-
     async def _monitor_products(self):
         """
         商品监控后台任务
@@ -129,22 +50,55 @@ class MonitorBot(commands.Bot):
         while not self.is_closed():
             try:
                 async with aiohttp.ClientSession() as session:
-                    for url, data in self.store.items.copy().items():
+                    items = self.store.get_items()
+                    for item in items:
+                        url = item.get('url')
+                        if not url:
+                            continue
+                            
                         available = await self.monitor.monitor_with_delay(url, session)
                         
                         if available is not None:
-                            previous_status = data["status"]
+                            previous_status = item.get('status', 'unknown')
                             current_status = "available" if available else "sold_out"
                             
                             if previous_status != current_status:
-                                self.store.update_item_status(url, current_status)
-                                await self.send_notification(channel, url, current_status)
+                                item['status'] = current_status
+                                self.store.save_items()
+                                await self.send_notification(channel, item, current_status)
                 
                 await asyncio.sleep(config.check_interval)
                 
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {str(e)}")
                 await asyncio.sleep(config.check_interval)
+
+    async def send_notification(self, channel: discord.TextChannel, item: Dict, status: str):
+        """
+        发送状态变更通知
+        
+        Args:
+            channel: Discord频道
+            item: 商品信息
+            status: 新状态
+        """
+        title = "🟢 商品可购买" if status == "available" else "🔴 商品已售罄"
+        color = discord.Color.green() if status == "available" else discord.Color.red()
+        
+        embed = discord.Embed(
+            title=title,
+            description=f"**商品链接**：\n{item['url']}",
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        
+        if item.get('name'):
+            embed.add_field(name="商品名称", value=item['name'], inline=False)
+            
+        if item.get('image_url'):
+            embed.set_image(url=item['image_url'])
+            
+        await channel.send(embed=embed)
 
     def setup_commands(self):
         """设置命令处理器"""
@@ -170,11 +124,20 @@ class MonitorBot(commands.Bot):
                 await ctx.send("⚠️ 只支持监控 Pop Mart 网站的商品！")
                 return
             
-            # 获取商品信息
-            async with aiohttp.ClientSession() as session:
-                product_info = await self.monitor.get_product_info(url, session)
+            # 解析商品信息
+            product_info = self.monitor.parse_product_url(url)
+            if not product_info:
+                await ctx.send("⚠️ 无效的商品链接！")
+                return
             
-            if self.store.add_item(url):
+            # 获取商品详细信息
+            async with aiohttp.ClientSession() as session:
+                details = await self.monitor.get_product_info(url, session)
+                if details:
+                    product_info.update(details)
+            
+            # 添加商品到监控列表
+            if self.store.add_item(product_info):
                 embed = discord.Embed(
                     title="✅ 添加监控成功",
                     description=f"已添加商品到监控列表：\n{url}",
@@ -226,11 +189,13 @@ class MonitorBot(commands.Bot):
                 ctx: Discord上下文
                 url: 商品URL
             """
-            # 获取商品信息
-            async with aiohttp.ClientSession() as session:
-                product_info = await self.monitor.get_product_info(url, session)
+            # 解析商品ID
+            product_info = self.monitor.parse_product_url(url)
+            if not product_info:
+                await ctx.send("⚠️ 无效的商品链接！")
+                return
             
-            if self.store.remove_item(url):
+            if self.store.remove_item(product_info['id']):
                 embed = discord.Embed(
                     title="✅ 移除成功",
                     description=f"已从监控列表中移除商品：\n{url}",
@@ -245,10 +210,6 @@ class MonitorBot(commands.Bot):
                         inline=False
                     )
                 
-                # 添加商品图片
-                if product_info.get('image_url'):
-                    embed.set_image(url=product_info['image_url'])
-                
                 logger.info(f"Removed item from watch: {url}")
             else:
                 embed = discord.Embed(
@@ -256,27 +217,14 @@ class MonitorBot(commands.Bot):
                     description="该商品不在监控列表中",
                     color=discord.Color.red()
                 )
-                
-                # 添加商品标题
-                if product_info.get('title'):
-                    embed.add_field(
-                        name="商品名称",
-                        value=product_info['title'],
-                        inline=False
-                    )
-                
-                # 添加商品图片
-                if product_info.get('image_url'):
-                    embed.set_image(url=product_info['image_url'])
-                
-                logger.warning(f"Attempted to remove non-existent item: {url}")
             
             await ctx.send(embed=embed)
 
         @self.command(name='list')
         async def list_items(ctx):
             """显示所有正在监控的商品"""
-            if not self.store.items:
+            items = self.store.get_items()
+            if not items:
                 embed = discord.Embed(
                     title="监控列表",
                     description="目前没有监控任何商品",
@@ -285,40 +233,37 @@ class MonitorBot(commands.Bot):
                 await ctx.send(embed=embed)
                 return
             
-            async with aiohttp.ClientSession() as session:
-                for url in self.store.items:
-                    # 为每个商品创建单独的embed
-                    product_info = await self.monitor.get_product_info(url, session)
-                    status = self.store.items[url]["status"]
-                    
-                    embed = discord.Embed(
-                        title="🔍 监控商品",
-                        description=f"**商品链接**：\n{url}\n\n**状态**：{'可购买' if status == 'available' else '售罄'}",
-                        color=discord.Color.green() if status == 'available' else discord.Color.red()
+            for item in items:
+                status = item.get('status', 'unknown')
+                embed = discord.Embed(
+                    title="🔍 监控商品",
+                    description=f"**商品链接**：\n{item['url']}\n\n**状态**：{'可购买' if status == 'available' else '售罄'}",
+                    color=discord.Color.green() if status == 'available' else discord.Color.red()
+                )
+                
+                # 添加商品标题
+                if item.get('title'):
+                    embed.add_field(
+                        name="商品名称",
+                        value=item['title'],
+                        inline=False
                     )
-                    
-                    # 添加商品标题
-                    if product_info.get('title'):
-                        embed.add_field(
-                            name="商品名称",
-                            value=product_info['title'],
-                            inline=False
-                        )
-                    
-                    # 添加商品图片
-                    if product_info.get('image_url'):
-                        embed.set_image(url=product_info['image_url'])
-                    
-                    await ctx.send(embed=embed)
+                
+                # 添加商品图片
+                if item.get('image_url'):
+                    embed.set_image(url=item['image_url'])
+                
+                await ctx.send(embed=embed)
 
         @self.command(name='status')
         async def status(ctx):
             """显示机器人状态"""
+            items = self.store.get_items()
             embed = discord.Embed(
                 title="机器人状态",
                 color=discord.Color.blue()
             )
-            embed.add_field(name="监控商品数量", value=str(len(self.store.items)), inline=False)
+            embed.add_field(name="监控商品数量", value=str(len(items)), inline=False)
             embed.add_field(name="检查间隔", value=f"{config.check_interval}秒", inline=False)
             embed.add_field(name="运行状态", value="🟢 正常运行中", inline=False)
             
