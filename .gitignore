@@ -1,73 +1,45 @@
-# Compiled class file
-*.class
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Log file
-*.log
-logs/
-
-# BlueJ files
-*.ctxt
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
-
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-
-# Maven
-target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
+# Virtual Environment
+venv/
+env/
+ENV/
 
 # IDE
 .idea/
-*.iws
-*.iml
-*.ipr
 .vscode/
-.settings/
-.project
-.classpath
-
-# OS
+*.swp
+*.swo
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# Environment variables
+# Logs
+logs/
+*.log
+
+# Local configuration
 .env
+config.yaml  # 实际配置文件
 
-# Local configuration files
-application-local.yml
-application-production.yml
-
-# H2 Database files
-*.db
-*.mv.db
-*.trace.db
-
-# Chrome driver
-chromedriver*
-
-# Cursor files
-.cursor/
+# Project specific
+monitored_items.json  # 监控项目文件
+data/  # 数据目录 

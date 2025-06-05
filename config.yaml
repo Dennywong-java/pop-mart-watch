@@ -1,0 +1,33 @@
+# Discord 配置
+discord:
+  # Discord 机器人令牌（在 config.local.yaml 中配置）
+  token: ""
+  # 通知消息发送的频道 ID（在 config.local.yaml 中配置）
+  channel_id: 0
+  # 机器人命令前缀
+  command_prefix: "!"
+
+# 监控配置
+monitor:
+  # 检查间隔时间（秒）
+  check_interval: 1
+  # 请求间隔时间（秒）
+  request_delay: 1
+  # 允许监控的域名列表
+  allowed_domains:
+    - "popmart.com"
+    - "pop-mart.com"
+
+# 存储配置
+storage:
+  # 监控商品数据存储文件路径
+  data_file: "data/monitored_items.json"
+
+# 日志配置
+logging:
+  # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: "INFO"
+  # 日志文件路径
+  file: "logs/bot.log"
+  # 是否在控制台输出日志
+  console: true 
