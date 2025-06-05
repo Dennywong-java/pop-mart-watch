@@ -22,26 +22,42 @@ class ProductMonitor:
     # 监控项目文件路径
     MONITORED_ITEMS_FILE = 'monitored_items.json'
     
+    # POPMART 特定的类名
+    POPMART_CLASSES = {
+        'add_button': [
+            'index_usBtn__2KlEx',
+            'index_btnFull__F7k90'
+        ],
+        'soldout_button': [
+            'index_red__kx6Ql'
+        ]
+    }
+    
     # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
+        'ADD TO BAG',
         'add to bag',
         'add to cart',
         'buy now',
         'purchase',
         'checkout',
         'in stock',
-        'add to shopping bag'
+        'add to shopping bag',
+        'add to my bag'
     ]
     
     # 售罄状态的关键词
     SOLD_OUT_KEYWORDS = [
+        'SOLD OUT',
         'sold out',
         'out of stock',
         'currently unavailable',
         'not available',
         'notify me when available',
         'coming soon',
-        'temporarily unavailable'
+        'temporarily unavailable',
+        'notify me',
+        'email when available'
     ]
 
     @staticmethod
@@ -326,111 +342,62 @@ class ProductMonitor:
 
     @staticmethod
     async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
-        """
-        检查商品是否可购买
-        
-        Args:
-            url: 商品URL
-            session: aiohttp会话
-            
-        Returns:
-            Optional[bool]: True表示可购买，False表示不可购买，None表示检查出错
-        """
+        """检查商品是否可购买"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://www.popmart.com/',
-                'Connection': 'keep-alive',
-                'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"macOS"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
+                'Connection': 'keep-alive'
             }
-            
-            logger.info(f"开始检查商品 URL: {url}")
             
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    # 检查所有按钮和链接
-                    buttons = soup.find_all(['button', 'a', 'div'])
-                    logger.debug(f"找到 {len(buttons)} 个可能的按钮/链接元素")
-                    
-                    for button in buttons:
-                        # 获取按钮的所有文本内容
-                        button_text = button.get_text(strip=True, separator=' ').lower()
-                        button_class = ' '.join(button.get('class', [])).lower()
-                        button_id = button.get('id', '').lower()
-                        
-                        # 记录按钮详细信息
-                        if button_text:
-                            logger.debug(f"按钮文本: '{button_text}'")
-                            logger.debug(f"按钮类名: '{button_class}'")
-                            logger.debug(f"按钮ID: '{button_id}'")
-                            
-                            # 检查是否包含可购买关键词
-                            for keyword in ProductMonitor.AVAILABLE_KEYWORDS:
-                                if keyword.lower() in button_text:
-                                    logger.info(f"找到可购买关键词: '{keyword}' in '{button_text}'")
-                                    
-                                    # 检查是否同时包含售罄关键词
-                                    has_soldout = any(soldout.lower() in button_text or soldout.lower() in button_class 
-                                                    for soldout in ProductMonitor.SOLD_OUT_KEYWORDS)
-                                    
-                                    if not has_soldout:
-                                        # 检查按钮是否被禁用
-                                        is_disabled = (
-                                            button.get('disabled') is not None or
-                                            'disabled' in button_class or
-                                            'disabled' in button_id or
-                                            'sold-out' in button_class or
-                                            'soldout' in button_class
-                                        )
-                                        
-                                        if not is_disabled:
-                                            logger.info(f"商品可购买: 找到有效的购买按钮 '{button_text}'")
-                                            return True
-                                        else:
-                                            logger.info(f"按钮已禁用: '{button_text}'")
-                    
-                    # 如果没有找到可购买按钮，检查页面源代码中的状态
-                    scripts = soup.find_all('script', type='application/json')
-                    for script in scripts:
-                        try:
-                            data = json.loads(script.string)
-                            if isinstance(data, dict):
-                                # 记录找到的所有相关状态
-                                logger.debug(f"找到 JSON 数据: {json.dumps(data, indent=2)}")
-                                
-                                # 检查各种可能的状态字段
-                                stock_status = data.get('stock_status', '')
-                                inventory = data.get('inventory', {})
-                                purchasable = data.get('purchasable', False)
-                                
-                                if stock_status:
-                                    logger.info(f"库存状态: {stock_status}")
-                                if inventory:
-                                    logger.info(f"库存信息: {inventory}")
-                                if purchasable is not None:
-                                    logger.info(f"可购买状态: {purchasable}")
-                                
-                                # 如果找到任何表明可购买的状态
-                                if (stock_status and 'in_stock' in stock_status.lower()) or \
-                                   (inventory and inventory.get('available_quantity', 0) > 0) or \
-                                   purchasable:
-                                    return True
-                        except json.JSONDecodeError:
+                    # 1. 快速检查：POPMART 特定的按钮
+                    for element in soup.find_all(['div', 'button']):
+                        element_classes = element.get('class', [])
+                        if not element_classes:
                             continue
+                            
+                        element_classes = set(element_classes)
+                        if any(cls in element_classes for cls in ProductMonitor.POPMART_CLASSES['add_button']):
+                            button_text = element.get_text(strip=True)
+                            if button_text in ProductMonitor.AVAILABLE_KEYWORDS:
+                                if not any(cls in element_classes for cls in ProductMonitor.POPMART_CLASSES['soldout_button']):
+                                    return True
                     
-                    logger.warning(f"商品 {url} 可能已售罄: 未找到有效的购买按钮或库存信息")
+                    # 2. 检查状态标记
+                    status_elements = soup.find_all(['div', 'span'], class_=lambda x: x and ('status' in x.lower() or 'stock' in x.lower()))
+                    for element in status_elements:
+                        text = element.get_text(strip=True)
+                        if any(keyword in text for keyword in ProductMonitor.SOLD_OUT_KEYWORDS):
+                            return False
+                        if any(keyword in text for keyword in ProductMonitor.AVAILABLE_KEYWORDS):
+                            return True
+                    
+                    # 3. 检查所有按钮
+                    buttons = soup.find_all(['button', 'div', 'a'])
+                    for button in buttons:
+                        button_text = button.get_text(strip=True)
+                        if any(keyword in button_text for keyword in ProductMonitor.AVAILABLE_KEYWORDS):
+                            button_class = ' '.join(button.get('class', [])).lower()
+                            if not any(keyword.lower() in button_class for keyword in ProductMonitor.SOLD_OUT_KEYWORDS):
+                                if not (button.get('disabled') or 'disabled' in button_class):
+                                    return True
+                    
+                    # 4. 检查表单
+                    forms = soup.find_all('form')
+                    for form in forms:
+                        form_action = form.get('action', '').lower()
+                        if 'add' in form_action or 'cart' in form_action or 'bag' in form_action:
+                            submit_button = form.find(['button', 'input'], type=['submit', 'button'])
+                            if submit_button and not submit_button.get('disabled'):
+                                return True
+                    
                     return False
                 else:
                     logger.error(f"请求失败: {url}, 状态码: {response.status}")
@@ -441,15 +408,6 @@ class ProductMonitor:
 
     @staticmethod
     async def monitor_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
-        """
-        带延迟的商品监控
-        
-        Args:
-            url: 商品URL
-            session: aiohttp会话
-            
-        Returns:
-            Optional[bool]: True表示可购买，False表示不可购买，None表示检查出错
-        """
+        """带延迟的商品监控"""
         await asyncio.sleep(config.request_delay)
         return await ProductMonitor.check_product_availability(url, session) 
