@@ -1,156 +1,159 @@
-# Pop Mart Watch Bot
+# POP MART 商品监控机器人
 
-一个用于监控 Pop Mart 商品库存的 Discord 机器人。
+一个用于监控 POP MART 商品库存状态的 Discord 机器人。
 
 ## 功能特点
 
-- 实时监控 Pop Mart 商品页面
-- Discord 机器人交互界面
-- 支持添加/删除监控商品
-- 库存状态变化即时通知
-- 可配置监控间隔时间
-- 完整的日志记录
-- YAML 配置文件支持
+- 实时监控商品库存状态
+- Discord 通知
+- 自动重试和错误恢复
+- 支持多商品同时监控
+- 资源使用限制（CPU和内存）
 
-## 项目结构
+## 系统要求
 
-```
-pop-mart-watch/
-├── src/                    # 源代码目录
-│   ├── __init__.py        # 包初始化文件
-│   ├── config.py          # 配置管理模块
-│   ├── storage.py         # 数据存储模块
-│   ├── monitor.py         # 商品监控模块
-│   └── discord_bot.py     # Discord机器人模块
-├── data/                   # 数据存储目录
-│   └── monitored_items.json
-├── logs/                   # 日志目录
-│   └── bot.log
-├── config.yaml            # 配置文件
-├── main.py                # 主程序入口
-└── requirements.txt       # 依赖管理
-```
+- Python 3.9 或更高版本
+- 系统内存 >= 2GB
+- Ubuntu/Debian 系统（如果在 EC2 上部署）
 
-## 环境要求
+## 在 EC2 上部署
 
-- Python 3.8+
-- Discord Bot Token
-- 配置文件 (config.yaml)
+### 1. 准备工作
 
-## 安装步骤
+确保您的 EC2 实例满足以下条件：
+- Ubuntu 系统
+- Python 3.9 或更高版本
+- 至少 2GB 内存
+- 具有 sudo 权限的用户
 
-1. 克隆仓库：
+### 2. 克隆项目
+
 ```bash
-git clone https://github.com/yourusername/pop-mart-watch.git
+# 克隆项目
+git clone https://github.com/YOUR_USERNAME/pop-mart-watch.git
 cd pop-mart-watch
 ```
 
-2. 安装依赖：
+### 3. 配置项目
+
 ```bash
-pip install -r requirements.txt
+# 复制示例配置文件
+cp config.example.yaml config.yaml
+
+# 编辑配置文件
+nano config.yaml
 ```
 
-3. 配置 `config.yaml`：
-```yaml
-# Discord 配置
-discord:
-  token: "your-discord-token-here"  # Discord 机器人令牌
-  channel_id: 123456789            # 通知消息发送的频道 ID
-  command_prefix: "!"              # 机器人命令前缀
+需要配置的重要项目：
+- `discord.token`: Discord 机器人令牌
+- `discord.channel_id`: 通知消息发送的频道 ID
 
-# 监控配置
-monitor:
-  check_interval: 30               # 检查间隔时间（秒）
-  request_delay: 1                 # 请求间隔时间（秒）
-  allowed_domains:                 # 允许监控的域名列表
-    - "popmart.com"
-    - "pop-mart.com"
+### 4. 运行部署脚本
 
-# 存储配置
-storage:
-  data_file: "data/monitored_items.json"  # 数据存储文件路径
-
-# 日志配置
-logging:
-  level: "INFO"                    # 日志级别
-  file: "logs/bot.log"            # 日志文件路径
-  console: true                    # 是否在控制台输出日志
-```
-
-4. 创建必要的目录：
 ```bash
-mkdir -p data logs
+# 使脚本可执行
+chmod +x setup.sh
+
+# 运行部署脚本
+./setup.sh
 ```
 
-5. 运行机器人：
+部署脚本会：
+- 创建必要的目录
+- 设置 Python 虚拟环境
+- 安装依赖
+- 创建系统服务
+- 启动监控服务
+
+### 5. 管理服务
+
 ```bash
-python main.py
+# 查看服务状态
+sudo systemctl status popmart-watch
+
+# 查看服务日志（systemd日志）
+sudo journalctl -u popmart-watch -f
+
+# 查看程序日志（包含启动、退出信息）
+tail -f logs/service.log
+
+# 重启服务
+sudo systemctl restart popmart-watch
+
+# 停止服务
+sudo systemctl stop popmart-watch
 ```
 
-## Discord 命令
+### 6. 监控商品
 
-- `!watch <url>` - 添加商品到监控列表
-  - 示例：`!watch https://www.popmart.com/products/123`
-  - 仅支持 Pop Mart 官方网站链接
+使用 Discord 命令管理监控商品：
 
-- `!unwatch <url>` - 移除商品监控
-  - 示例：`!unwatch https://www.popmart.com/products/123`
+```
+!add https://www.popmart.com/us/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll
+!remove 578
+!list
+```
 
-- `!list` - 查看所有监控商品
-  - 显示所有正在监控的商品及其状态
+## 故障排除
 
-- `!status` - 查看机器人状态
-  - 显示监控商品数量
-  - 显示检查间隔时间
-  - 显示运行状态
+### 1. 服务无法启动
 
-## 配置说明
+检查以下几点：
+- 配置文件是否正确（`config.yaml`）
+- Discord 令牌是否有效
+- 日志文件中是否有错误信息
 
-### Discord 配置
-- `token`: Discord 机器人令牌，从 Discord Developer Portal 获取
-- `channel_id`: 通知消息发送的频道 ID
-- `command_prefix`: 机器人命令前缀，默认为 "!"
+```bash
+# 检查配置文件
+cat config.yaml
 
-### 监控配置
-- `check_interval`: 检查商品状态的时间间隔（秒）
-- `request_delay`: 每次请求之间的延迟时间（秒）
-- `allowed_domains`: 允许监控的网站域名列表
+# 检查日志
+tail -f logs/service.log
+```
 
-### 存储配置
-- `data_file`: 监控商品数据的存储文件路径
+### 2. 内存使用过高
 
-### 日志配置
-- `level`: 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- `file`: 日志文件保存路径
-- `console`: 是否在控制台输出日志
+服务配置了以下资源限制：
+- 内存限制：1GB
+- CPU限制：最多使用50%
 
-## 注意事项
+如果需要调整限制，编辑服务文件：
+```bash
+sudo nano /etc/systemd/system/popmart-watch.service
+```
 
-1. 请合理设置检查间隔时间，避免过于频繁的请求
-2. 建议在服务器或长期运行的机器上部署
-3. 确保 Discord 机器人有足够的权限发送消息和嵌入内容
-4. 定期检查日志文件，及时发现和处理潜在问题
-5. 建议将配置文件添加到 .gitignore 中，避免泄露敏感信息
+### 3. 程序频繁重启
 
-## 错误处理
+检查日志文件以确定重启原因：
+```bash
+tail -f logs/service.log
+```
 
-1. 如果机器人无法启动，请检查：
-   - Discord Token 是否正确
-   - 配置文件格式是否正确
-   - 必要的目录是否已创建
+可能的原因：
+- 网络连接问题
+- Discord API 限制
+- 程序错误
 
-2. 如果监控不工作，请检查：
-   - 网络连接是否正常
-   - 商品 URL 是否正确
-   - 日志文件中是否有错误信息
+## 安全建议
 
-## 贡献指南
+1. 不要将以下文件提交到 Git：
+   - `config.yaml`（包含敏感信息）
+   - `monitored_items.json`（监控配置）
+   - `logs/` 目录（日志文件）
 
-欢迎提交 Issue 和 Pull Request 来改进这个项目。在提交之前，请确保：
+2. 确保 EC2 安全组设置正确：
+   - 只开放必要的端口
+   - 限制 SSH 访问来源
 
-1. 代码符合 PEP 8 规范
-2. 添加了适当的注释和文档
-3. 所有测试都已通过
+3. 定期更新系统和依赖：
+   ```bash
+   sudo apt update && sudo apt upgrade
+   pip install --upgrade -r requirements.txt
+   ```
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
 
 ## 许可证
 
