@@ -29,8 +29,8 @@ class ProductMonitor:
             'index_btnFull__F7k90'
         ],
         'soldout_button': [
-            'index_red__kx6Ql',
-            'index_soldOut__'  # 部分类名
+            'index_disabled__',  # 禁用状态的类名
+            'index_disabledColorBtn__'  # 禁用颜色的类名
         ]
     }
     
@@ -374,23 +374,18 @@ class ProductMonitor:
                             
                             # 检查按钮文本
                             if button_text in ProductMonitor.AVAILABLE_KEYWORDS:
-                                # 检查是否是售罄按钮
-                                is_soldout = False
-                                for soldout_class in ProductMonitor.POPMART_CLASSES['soldout_button']:
-                                    if any(cls.startswith(soldout_class) for cls in element_classes):
-                                        is_soldout = True
+                                # 检查是否被禁用
+                                is_disabled = False
+                                for disabled_class in ProductMonitor.POPMART_CLASSES['soldout_button']:
+                                    if any(cls.startswith(disabled_class) for cls in element_classes):
+                                        is_disabled = True
                                         break
                                 
-                                if not is_soldout:
-                                    # 检查是否被禁用
-                                    if not (element.get('disabled') or 
-                                          any('disabled' in cls.lower() for cls in element_classes)):
-                                        logger.info(f"商品可购买: 找到有效的 POPMART 按钮 '{button_text}'")
-                                        return True
-                                    else:
-                                        logger.debug("按钮已禁用")
+                                if not is_disabled and not element.get('disabled'):
+                                    logger.info(f"商品可购买: 找到有效的 POPMART 按钮 '{button_text}'")
+                                    return True
                                 else:
-                                    logger.debug("按钮处于售罄状态")
+                                    logger.debug("按钮已禁用")
                     
                     # 2. 检查状态标记
                     status_elements = soup.find_all(['div', 'span'], class_=lambda x: x and ('status' in x.lower() or 'stock' in x.lower()))
