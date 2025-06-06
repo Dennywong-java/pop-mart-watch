@@ -89,16 +89,15 @@ sudo systemctl stop popmart-watch
 
 机器人使用斜杠命令系统，支持以下命令：
 
-- `/add <url> <name>` - 添加商品到监控列表
-  - `url`: 商品页面的 URL
-  - `name`: 商品名称（用于显示在通知中）
+- `/watch <url>` - 添加商品到监控列表
+  - `url`: 商品页面的 URL（机器人会自动提取商品 ID 和名称）
   
   示例：
   ```
-  /add https://www.popmart.com/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll LABUBU娃娃
+  /watch https://www.popmart.com/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll
   ```
 
-- `/remove <url>` - 从监控列表中移除商品
+- `/unwatch <url>` - 从监控列表中移除商品
   - `url`: 要移除的商品 URL
 
 - `/list` - 显示所有正在监控的商品

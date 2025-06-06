@@ -86,21 +86,38 @@ class Monitor:
     def load_monitored_items(self) -> None:
         """从文件加载监控商品列表"""
         try:
-            if os.path.exists(config.storage.data_file):
-                with open(config.storage.data_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+            # 确保数据目录存在
+            os.makedirs(os.path.dirname(config.storage.data_file), exist_ok=True)
+            
+            # 如果文件不存在，创建空文件
+            if not os.path.exists(config.storage.data_file):
+                with open(config.storage.data_file, 'w', encoding='utf-8') as f:
+                    json.dump({}, f)
+                self.monitored_items = {}
+                return
+            
+            # 读取文件内容
+            with open(config.storage.data_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+                # 如果是空文件或 null
+                if not data:
+                    self.monitored_items = {}
+                    return
                     
-                    # 如果数据是列表格式，转换为字典格式
-                    if isinstance(data, list):
-                        self.monitored_items = {}
-                        for item in data:
-                            self.monitored_items[item['url']] = {
-                                'name': item['name'],
-                                'url': item['url'],
-                                'last_status': item.get('last_status')
-                            }
-                    else:
-                        self.monitored_items = data
+                # 如果数据是列表格式，转换为字典格式
+                if isinstance(data, list):
+                    self.monitored_items = {}
+                    for item in data:
+                        self.monitored_items[item['url']] = {
+                            'name': item['name'],
+                            'url': item['url'],
+                            'last_status': item.get('last_status')
+                        }
+                else:
+                    self.monitored_items = data
+                    
+            logger.info(f"已加载 {len(self.monitored_items)} 个监控商品")
         except Exception as e:
             logger.error(f"加载监控商品列表时出错: {str(e)}")
             self.monitored_items = {}
@@ -147,22 +164,29 @@ class Monitor:
             return False
 
     @staticmethod
-    def parse_product_url(url: str) -> Dict[str, str]:
-        """从URL中解析产品信息"""
+    def parse_product_info(url: str) -> Dict[str, str]:
+        """从 URL 中解析商品信息"""
         try:
+            # 移除 URL 中的查询参数
+            url = url.split('?')[0].strip('/')
+            
+            # 匹配商品 ID 和名称
             pattern = r'/products/(\d+)/([^/]+)'
             match = re.search(pattern, url)
-            if match:
-                product_id = match.group(1)
-                product_name = match.group(2).replace('-', ' ').title()
-                return {
-                    'id': product_id,
-                    'name': product_name,
-                    'url': url
-                }
+            if not match:
+                raise ValueError("无效的商品 URL 格式")
+            
+            product_id = match.group(1)
+            product_name = match.group(2).replace('-', ' ').strip()
+            
+            return {
+                'id': product_id,
+                'name': product_name,
+                'url': url
+            }
         except Exception as e:
-            logger.error(f"解析产品URL时出错: {e}")
-        return {}
+            logger.error(f"解析商品 URL 时出错: {str(e)}")
+            raise ValueError("无法从 URL 解析商品信息")
 
     @staticmethod
     def create_driver():

@@ -37,14 +37,13 @@ class DiscordBot(discord.Client):
     def setup_commands(self):
         """设置斜杠命令"""
         @self.tree.command(
-            name="add",
+            name="watch",
             description="添加商品到监控列表"
         )
         @app_commands.describe(
-            url="商品页面的URL",
-            name="商品名称（用于显示在通知中）"
+            url="商品页面的 URL"
         )
-        async def add(interaction: discord.Interaction, url: str, name: str):
+        async def watch(interaction: discord.Interaction, url: str):
             try:
                 # 验证 URL
                 if not any(domain in url for domain in self.config.monitor.allowed_domains):
@@ -53,19 +52,27 @@ class DiscordBot(discord.Client):
                     )
                     return
                 
+                # 解析商品信息
+                try:
+                    product_info = Monitor.parse_product_info(url)
+                except ValueError as e:
+                    await interaction.response.send_message(f"错误: {str(e)}")
+                    return
+                
                 # 添加到监控列表
-                success = await self.monitor.add_monitored_item(url, name)
+                success = await self.monitor.add_monitored_item(url, product_info['name'])
                 if success:
                     # 构建嵌入消息
                     embed = discord.Embed(
                         title="已添加商品到监控列表",
-                        description=name,
+                        description=product_info['name'],
                         color=discord.Color.green()
                     )
+                    embed.add_field(name="商品 ID", value=product_info['id'], inline=True)
                     embed.add_field(name="URL", value=url, inline=False)
                     
                     await interaction.response.send_message(embed=embed)
-                    logger.info(f"添加商品到监控列表: {name} ({url})")
+                    logger.info(f"添加商品到监控列表: {product_info['name']} (ID: {product_info['id']})")
                 else:
                     await interaction.response.send_message("添加商品失败，可能已经在监控列表中")
                 
@@ -74,13 +81,13 @@ class DiscordBot(discord.Client):
                 await interaction.response.send_message(f"添加监控商品时出错: {str(e)}")
         
         @self.tree.command(
-            name="remove",
+            name="unwatch",
             description="从监控列表中移除商品"
         )
         @app_commands.describe(
-            url="要移除的商品URL"
+            url="要移除的商品 URL"
         )
-        async def remove(interaction: discord.Interaction, url: str):
+        async def unwatch(interaction: discord.Interaction, url: str):
             try:
                 success = await self.monitor.remove_monitored_item(url)
                 if success:
@@ -113,12 +120,21 @@ class DiscordBot(discord.Client):
                 
                 # 添加每个商品的信息
                 for url, item in self.monitor.monitored_items.items():
-                    status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
-                    embed.add_field(
-                        name=item['name'],
-                        value=f"状态: {status}\n{url}",
-                        inline=False
-                    )
+                    try:
+                        product_info = Monitor.parse_product_info(url)
+                        status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
+                        embed.add_field(
+                            name=f"{item['name']} (ID: {product_info['id']})",
+                            value=f"状态: {status}\n{url}",
+                            inline=False
+                        )
+                    except:
+                        status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
+                        embed.add_field(
+                            name=item['name'],
+                            value=f"状态: {status}\n{url}",
+                            inline=False
+                        )
                 
                 await interaction.followup.send(embed=embed)
                 
@@ -147,11 +163,22 @@ class DiscordBot(discord.Client):
         
         # 同步命令到服务器
         try:
+            # 先同步到指定服务器
             await self.tree.sync(guild=discord.Object(id=self.config.discord.guild_id))
-            commands = await self.tree.fetch_commands(guild=discord.Object(id=self.config.discord.guild_id))
-            logger.info(f"斜杠命令已同步到服务器 {self.config.discord.guild_id}，共 {len(commands)} 个命令")
-            for command in commands:
-                logger.info(f"已注册命令: /{command.name} - {command.description}")
+            guild_commands = await self.tree.fetch_commands(guild=discord.Object(id=self.config.discord.guild_id))
+            logger.info(f"斜杠命令已同步到服务器 {self.config.discord.guild_id}，共 {len(guild_commands)} 个命令")
+            
+            # 同步全局命令
+            await self.tree.sync()
+            global_commands = await self.tree.fetch_commands()
+            logger.info(f"斜杠命令已全局同步，共 {len(global_commands)} 个命令")
+            
+            # 输出所有已注册的命令
+            logger.info("已注册的命令：")
+            for command in guild_commands:
+                logger.info(f"[服务器] /{command.name} - {command.description}")
+            for command in global_commands:
+                logger.info(f"[全局] /{command.name} - {command.description}")
         except Exception as e:
             logger.error(f"同步命令时出错: {str(e)}")
             return
@@ -182,10 +209,17 @@ class DiscordBot(discord.Client):
                             item['last_status'] = is_available
                             self.monitor.save_monitored_items()
                             
+                            # 获取商品信息
+                            try:
+                                product_info = Monitor.parse_product_info(url)
+                                product_name = f"{item['name']} (ID: {product_info['id']})"
+                            except:
+                                product_name = item['name']
+                            
                             # 构建嵌入消息
                             embed = discord.Embed(
                                 title="商品状态更新",
-                                description=item['name'],
+                                description=product_name,
                                 color=discord.Color.green() if is_available else discord.Color.red()
                             )
                             embed.add_field(name="状态", value="可购买 ✅" if is_available else "已售罄 ❌", inline=True)
