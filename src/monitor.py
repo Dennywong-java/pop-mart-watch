@@ -517,10 +517,9 @@ class Monitor:
                         # 获取域名
                         main_domain = resolved_url.split('/')[2]
                         
-                        # 设置自定义 DNS
-                        driver.execute_cdp_cmd('Network.setDNSClientResolver', {
-                            'nameservers': ['8.8.8.8', '1.1.1.1']
-                        })
+                        # 设置网络选项
+                        driver.execute_cdp_cmd('Network.enable', {})
+                        driver.execute_cdp_cmd('Network.setBypassServiceWorker', {'bypass': True})
                         
                         # 先访问主域名以建立连接
                         driver.get(f'https://{main_domain}')
