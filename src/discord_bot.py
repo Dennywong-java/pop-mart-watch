@@ -266,12 +266,7 @@ class DiscordBot(commands.Bot):
                         message = f"商品状态更新:\n{item['name']}\n状态: {status}\n链接: {item['url']}"
                         
                         # 发送通知
-                        channel = self.get_channel(self.config.notification_channel_id)
-                        if channel:
-                            await channel.send(message)
-                            logger.info(f"已发送商品状态更新通知: {item['name']} - {status}")
-                        else:
-                            logger.error(f"无法找到通知频道: {self.config.notification_channel_id}")
+                        await self.send_notification(message)
                     
                 except Exception as e:
                     logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
@@ -294,6 +289,17 @@ class DiscordBot(commands.Bot):
             return
         logger.error(f"命令执行出错: {str(error)}")
         await ctx.send(f"命令执行出错: {str(error)}")
+
+    async def send_notification(self, message: str):
+        """发送通知消息到指定频道"""
+        try:
+            channel = self.get_channel(self.config.discord.channel_id)
+            if channel:
+                await channel.send(message)
+            else:
+                logger.error(f"无法找到通知频道: {self.config.discord.channel_id}")
+        except Exception as e:
+            logger.error(f"发送通知消息时出错: {str(e)}")
 
 async def run_bot(config: Config):
     """运行 Discord 机器人"""

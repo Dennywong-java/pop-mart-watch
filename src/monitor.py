@@ -371,9 +371,43 @@ class Monitor:
                     logger.warning(f"清理临时目录失败 {dir_path}: {str(e)}")
 
     @staticmethod
-    def check_dns(domain):
+    def normalize_domain(url):
+        """规范化域名"""
+        try:
+            # 从 URL 中提取域名
+            domain = url.split('/')[2].lower()
+            
+            # 检查是否是 POP MART 域名
+            if not any(domain.endswith(d) for d in ['popmart.com', 'pop-mart.com']):
+                return None
+            
+            # 规范化域名
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            
+            # 尝试不同的域名变体
+            domain_variants = [
+                domain,
+                domain.replace('popmart.com', 'pop-mart.com'),
+                domain.replace('pop-mart.com', 'popmart.com'),
+                f'www.{domain}',
+            ]
+            
+            return domain_variants
+        except Exception as e:
+            logger.error(f"域名规范化失败: {str(e)}")
+            return None
+
+    @staticmethod
+    def check_dns(url):
         """检查域名解析"""
         try:
+            # 获取域名变体
+            domain_variants = Monitor.normalize_domain(url)
+            if not domain_variants:
+                logger.error("无效的域名")
+                return False
+            
             # 尝试使用不同的 DNS 服务器
             dns_servers = [
                 ('8.8.8.8', 'Google DNS'),
@@ -381,20 +415,28 @@ class Monitor:
                 ('208.67.222.222', 'OpenDNS')
             ]
             
-            for dns_ip, dns_name in dns_servers:
-                try:
-                    resolver = dns.resolver.Resolver()
-                    resolver.nameservers = [dns_ip]
-                    answers = resolver.resolve(domain, 'A')
-                    logger.info(f"使用 {dns_name} ({dns_ip}) 解析 {domain}: {[str(rdata) for rdata in answers]}")
-                    return True
-                except Exception as e:
-                    logger.warning(f"使用 {dns_name} ({dns_ip}) 解析失败: {str(e)}")
+            for domain in domain_variants:
+                for dns_ip, dns_name in dns_servers:
+                    try:
+                        resolver = dns.resolver.Resolver()
+                        resolver.nameservers = [dns_ip]
+                        answers = resolver.resolve(domain, 'A')
+                        logger.info(f"使用 {dns_name} ({dns_ip}) 解析 {domain}: {[str(rdata) for rdata in answers]}")
+                        return domain  # 返回成功解析的域名
+                    except Exception as e:
+                        logger.warning(f"使用 {dns_name} ({dns_ip}) 解析 {domain} 失败: {str(e)}")
             
             # 如果所有 DNS 服务器都失败，尝试使用系统默认 DNS
-            ip = socket.gethostbyname(domain)
-            logger.info(f"使用系统 DNS 解析 {domain}: {ip}")
-            return True
+            for domain in domain_variants:
+                try:
+                    ip = socket.gethostbyname(domain)
+                    logger.info(f"使用系统 DNS 解析 {domain}: {ip}")
+                    return domain
+                except:
+                    continue
+            
+            logger.error("所有域名变体解析失败")
+            return False
         except Exception as e:
             logger.error(f"DNS 解析失败: {str(e)}")
             return False
@@ -403,47 +445,52 @@ class Monitor:
     def check_network(url):
         """检查网络连接"""
         try:
-            domain = url.split('/')[2]
-            
             # 检查 DNS 解析
-            if not Monitor.check_dns(domain):
-                return False
+            resolved_domain = Monitor.check_dns(url)
+            if not resolved_domain:
+                return False, url
+            
+            # 构建新的 URL
+            url_parts = url.split('/')
+            url_parts[2] = resolved_domain
+            new_url = '/'.join(url_parts)
             
             # 尝试 ping
             try:
-                result = subprocess.run(['ping', '-c', '1', '-W', '5', domain], 
+                result = subprocess.run(['ping', '-c', '1', '-W', '5', resolved_domain], 
                                      capture_output=True, text=True)
                 if result.returncode == 0:
-                    logger.info(f"Ping {domain} 成功")
-                    return True
+                    logger.info(f"Ping {resolved_domain} 成功")
+                    return True, new_url
                 else:
-                    logger.warning(f"Ping {domain} 失败: {result.stderr}")
+                    logger.warning(f"Ping {resolved_domain} 失败: {result.stderr}")
             except Exception as e:
                 logger.warning(f"Ping 执行失败: {str(e)}")
             
             # 如果 ping 失败，尝试 curl
             try:
-                result = subprocess.run(['curl', '-I', '-s', '-m', '10', url], 
+                result = subprocess.run(['curl', '-I', '-s', '-m', '10', new_url], 
                                      capture_output=True, text=True)
                 if result.returncode == 0:
-                    logger.info(f"Curl {url} 成功")
-                    return True
+                    logger.info(f"Curl {new_url} 成功")
+                    return True, new_url
                 else:
-                    logger.warning(f"Curl {url} 失败: {result.stderr}")
+                    logger.warning(f"Curl {new_url} 失败: {result.stderr}")
             except Exception as e:
                 logger.warning(f"Curl 执行失败: {str(e)}")
             
-            return False
+            return False, new_url
         except Exception as e:
             logger.error(f"网络检查失败: {str(e)}")
-            return False
+            return False, url
 
     @staticmethod
     async def check_product_availability(url, session):
         """检查商品是否可购买"""
         try:
             # 首先检查网络连接
-            if not Monitor.check_network(url):
+            network_ok, resolved_url = Monitor.check_network(url)
+            if not network_ok:
                 logger.error("网络连接检查失败")
                 return False
             
@@ -468,7 +515,7 @@ class Monitor:
                         driver.delete_all_cookies()
                         
                         # 获取域名
-                        main_domain = url.split('/')[2]
+                        main_domain = resolved_url.split('/')[2]
                         
                         # 设置自定义 DNS
                         driver.execute_cdp_cmd('Network.setDNSClientResolver', {
@@ -482,7 +529,7 @@ class Monitor:
                         time.sleep(2)
                         
                         # 然后访问实际的 URL
-                        driver.get(url)
+                        driver.get(resolved_url)
                         
                         # 等待页面加载完成
                         WebDriverWait(driver, 30).until(
