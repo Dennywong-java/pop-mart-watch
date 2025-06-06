@@ -25,20 +25,25 @@ log "启动监控脚本"
 log "工作目录: $PWD"
 
 # 检查虚拟环境
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     log "错误: 虚拟环境不存在"
     exit 1
 fi
 
 # 检查配置文件
 if [ ! -f "config.yaml" ]; then
-    log "错误: 配置文件不存在"
+    if [ -f "config.yaml.example" ]; then
+        log "警告: 配置文件不存在，但发现示例配置文件"
+        log "请复制 config.yaml.example 到 config.yaml 并进行配置"
+    else
+        log "错误: 配置文件和示例配置文件都不存在"
+    fi
     exit 1
 fi
 
 # 激活虚拟环境
 log "激活虚拟环境"
-source venv/bin/activate
+source .venv/bin/activate
 if [ $? -ne 0 ]; then
     log "错误: 无法激活虚拟环境"
     exit 1
@@ -74,9 +79,14 @@ while true; do
     log "启动 Python 程序..."
     
     # 将Python程序的输出也记录到日志文件
-    python main.py 2>&1 | tee -a logs/app.log
-    EXIT_CODE=${PIPESTATUS[0]}
+    python main.py 2>&1 | while IFS= read -r line; do
+        # 过滤掉不必要的DEBUG日志
+        if [[ ! $line =~ ^.*DEBUG.*$ ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $line" | tee -a logs/app.log
+        fi
+    done
     
+    EXIT_CODE=${PIPESTATUS[0]}
     log "程序退出，退出码: $EXIT_CODE"
     
     # 如果是正常退出（退出码为0），则不重启
@@ -87,7 +97,7 @@ while true; do
     
     # 记录错误信息
     log "程序异常退出，最后100行日志："
-    tail -n 100 logs/app.log >> logs/monitor.log
+    tail -n 100 logs/app.log | grep -v "DEBUG" >> logs/monitor.log
     
     log "5秒后重启..."
     sleep 5

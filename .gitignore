@@ -40,7 +40,7 @@ logs/
 # Local configuration
 .env
 config.local.yaml
-config.yaml  # 实际配置文件
+config.yaml
 
 # Project specific
 monitored_items.json  # 监控项目文件

@@ -1,0 +1,72 @@
+# POP MART Watch 配置文件示例
+# 使用方法：复制此文件为 config.yaml 并填写相应配置
+
+# Discord 机器人配置
+discord:
+  # Discord 机器人令牌（必填）
+  # 从 Discord Developer Portal 获取：https://discord.com/developers/applications
+  token: ""
+  
+  # 通知消息发送的频道 ID（必填）
+  # 在 Discord 中右键点击频道，选择"复制频道 ID"
+  channel_id: 0
+  
+  # Discord 服务器 ID（必填）
+  # 在 Discord 中右键点击服务器图标，选择"复制服务器 ID"
+  guild_id: 0
+
+# 监控配置
+monitor:
+  # 检查商品状态的间隔时间（秒）
+  check_interval: 30
+  
+  # 每次请求之间的延迟时间（秒）
+  # 建议不要设置太小，以免被网站封禁
+  request_delay: 2
+  
+  # 允许监控的域名列表
+  allowed_domains:
+    - "popmart.com"
+    - "pop-mart.com"
+    - "www.popmart.com"
+    - "www.pop-mart.com"
+    - "us.popmart.com"
+    - "au.popmart.com"
+    - "uk.popmart.com"
+    - "sg.popmart.com"
+    - "my.popmart.com"
+    - "th.popmart.com"
+    - "kr.popmart.com"
+    - "jp.popmart.com"
+
+# 存储配置
+storage:
+  # 监控商品数据存储文件路径（相对于项目根目录）
+  data_file: "data/monitored_items.json"
+
+# 日志配置
+logging:
+  # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: "INFO"
+  
+  # 日志文件路径（相对于项目根目录）
+  file: "logs/bot.log"
+  
+  # 是否在控制台输出日志
+  console: true
+  
+  # 日志格式
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  
+  # 日志文件最大大小（字节）
+  max_size: 10485760  # 10MB
+  
+  # 保留的日志文件数量
+  backup_count: 5
+  
+  # 第三方库日志级别
+  third_party_levels:
+    discord: "WARNING"
+    selenium: "WARNING"
+    urllib3: "WARNING"
+    asyncio: "WARNING" 
