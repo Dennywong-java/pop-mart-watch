@@ -233,6 +233,16 @@ class Monitor:
             options.add_argument('--media-cache-size=1')
             options.add_argument('--aggressive-cache-discard')
             
+            # 网络配置
+            options.add_argument('--dns-prefetch-disable')  # 禁用 DNS 预取
+            options.add_argument('--no-proxy-server')  # 禁用代理
+            options.add_argument('--disable-ipv6')  # 禁用 IPv6
+            options.add_argument('--disable-background-networking')  # 禁用后台网络
+            options.add_argument('--disable-sync')  # 禁用同步
+            options.add_argument('--disable-web-security')  # 禁用网络安全限制
+            options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
+            options.add_argument('--ignore-ssl-errors')  # 忽略 SSL 错误
+            
             # 性能优化
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
@@ -254,8 +264,6 @@ class Monitor:
             options.add_argument('--disable-site-isolation-trials')
             options.add_argument('--disable-smooth-scrolling')
             options.add_argument('--disable-speech-api')
-            options.add_argument('--disable-web-security')
-            options.add_argument('--disable-databases')
             
             # 设置页面加载策略
             options.page_load_strategy = 'eager'
@@ -365,103 +373,70 @@ class Monitor:
         """检查商品是否可购买"""
         driver = None
         try:
-            # 正确处理URL编码
-            url_parts = url.split('/')
-            product_name = url_parts[-1]
-            product_id = url_parts[-2]
-            encoded_name = quote(product_name, safe='')
-            fixed_url = f"{'/'.join(url_parts[:-1])}/{encoded_name}"
-            
             driver = Monitor.create_driver()
             if not driver:
                 logger.error("无法创建 WebDriver")
-                return None
-            
-            try:
-                logger.debug(f"访问商品页面: {fixed_url}")
-                driver.get(fixed_url)
-                
-                # 等待页面加载
+                return False
+
+            # 设置页面加载超时
+            driver.set_page_load_timeout(30)
+            driver.set_script_timeout(30)
+
+            # 添加重试机制
+            max_retries = 3
+            retry_delay = 2
+
+            for attempt in range(max_retries):
                 try:
-                    WebDriverWait(driver, 20).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    # 清除所有 cookies
+                    driver.delete_all_cookies()
+                    
+                    # 先访问主域名以建立连接
+                    main_domain = url.split('/')[2]
+                    driver.get(f'https://{main_domain}')
+                    
+                    # 等待一下以确保连接建立
+                    time.sleep(2)
+                    
+                    # 然后访问实际的 URL
+                    driver.get(url)
+                    
+                    # 等待页面加载完成
+                    WebDriverWait(driver, 30).until(
+                        lambda d: d.execute_script('return document.readyState') == 'complete'
                     )
-                except TimeoutException:
-                    logger.warning("页面加载超时")
-                    return None
-                
-                # 获取页面标题和URL用于调试
-                try:
-                    title = driver.title
-                    current_url = driver.current_url
-                    logger.debug(f"页面标题: {title}")
-                    logger.debug(f"页面 URL: {current_url}")
-                except:
-                    logger.warning("无法获取页面标题或URL")
-                
-                # 如果页面返回400，尝试使用备用域名
-                if "400 Bad Request" in driver.page_source:
-                    alternate_url = fixed_url.replace("popmart.com", "pop-mart.com")
-                    logger.debug(f"尝试备用域名: {alternate_url}")
-                    driver.get(alternate_url)
-                    try:
-                        WebDriverWait(driver, 20).until(
-                            EC.presence_of_element_located((By.TAG_NAME, "body"))
-                        )
-                    except TimeoutException:
-                        logger.warning("备用域名页面加载超时")
-                        return None
-                
-                # 查找可购买状态相关元素
-                buttons = driver.find_elements(By.XPATH, 
-                    "//*[contains(@class, 'button') or self::button or self::a or self::div or self::span or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6]"
-                )
-                
-                # 查找库存状态相关元素
-                status_elements = driver.find_elements(By.XPATH,
-                    "//*[contains(@class, 'status') or contains(@class, 'stock')]"
-                )
-                
-                # 检查所有文本内容
-                all_texts = []
-                for element in buttons + status_elements:
-                    try:
-                        text = element.text.strip()
-                        if text:
-                            all_texts.append(text.upper())
-                    except:
+                    
+                    # 检查是否有购买按钮
+                    buy_button = driver.find_element(By.CSS_SELECTOR, '[data-testid="AddToCartButton"]')
+                    return not ('disabled' in buy_button.get_attribute('class').lower() or 
+                              'sold' in buy_button.get_attribute('class').lower())
+                    
+                except Exception as e:
+                    if 'net::ERR_NAME_NOT_RESOLVED' in str(e):
+                        logger.warning(f"DNS 解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    else:
+                        logger.warning(f"检查商品可用性时出错 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
                         continue
-                
-                # 如果找不到任何相关元素，返回None
-                if not all_texts:
-                    logger.warning("无法确定商品状态: 未找到相关关键词")
-                    return None
-                
-                # 检查是否可购买
-                for text in all_texts:
-                    if any(keyword.upper() in text for keyword in Monitor.AVAILABLE_KEYWORDS):
-                        return True
-                    if any(keyword.upper() in text for keyword in Monitor.SOLD_OUT_KEYWORDS):
+                    else:
+                        logger.error(f"检查商品可用性失败，已达到最大重试次数: {str(e)}")
                         return False
-                
-                logger.warning(f"无法确定商品状态: 找到的文本 - {', '.join(all_texts)}")
-                return None
-                
-            finally:
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                
+
         except Exception as e:
             logger.error(f"检查商品可用性时出错: {str(e)}")
-            if driver:
-                try:
+            return False
+            
+        finally:
+            try:
+                if driver:
                     driver.quit()
-                except:
-                    pass
-            return None
+            except:
+                pass
+
+        return False
 
     @staticmethod
     async def check_product_availability_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
