@@ -24,6 +24,8 @@ import uuid
 import platform
 import subprocess
 from pathlib import Path
+import socket
+import dns.resolver
 
 logger = logging.getLogger(__name__)
 
@@ -369,74 +371,159 @@ class Monitor:
                     logger.warning(f"清理临时目录失败 {dir_path}: {str(e)}")
 
     @staticmethod
-    async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
-        """检查商品是否可购买"""
-        driver = None
+    def check_dns(domain):
+        """检查域名解析"""
         try:
-            driver = Monitor.create_driver()
-            if not driver:
-                logger.error("无法创建 WebDriver")
-                return False
-
-            # 设置页面加载超时
-            driver.set_page_load_timeout(30)
-            driver.set_script_timeout(30)
-
-            # 添加重试机制
-            max_retries = 3
-            retry_delay = 2
-
-            for attempt in range(max_retries):
+            # 尝试使用不同的 DNS 服务器
+            dns_servers = [
+                ('8.8.8.8', 'Google DNS'),
+                ('1.1.1.1', 'Cloudflare DNS'),
+                ('208.67.222.222', 'OpenDNS')
+            ]
+            
+            for dns_ip, dns_name in dns_servers:
                 try:
-                    # 清除所有 cookies
-                    driver.delete_all_cookies()
-                    
-                    # 先访问主域名以建立连接
-                    main_domain = url.split('/')[2]
-                    driver.get(f'https://{main_domain}')
-                    
-                    # 等待一下以确保连接建立
-                    time.sleep(2)
-                    
-                    # 然后访问实际的 URL
-                    driver.get(url)
-                    
-                    # 等待页面加载完成
-                    WebDriverWait(driver, 30).until(
-                        lambda d: d.execute_script('return document.readyState') == 'complete'
-                    )
-                    
-                    # 检查是否有购买按钮
-                    buy_button = driver.find_element(By.CSS_SELECTOR, '[data-testid="AddToCartButton"]')
-                    return not ('disabled' in buy_button.get_attribute('class').lower() or 
-                              'sold' in buy_button.get_attribute('class').lower())
-                    
+                    resolver = dns.resolver.Resolver()
+                    resolver.nameservers = [dns_ip]
+                    answers = resolver.resolve(domain, 'A')
+                    logger.info(f"使用 {dns_name} ({dns_ip}) 解析 {domain}: {[str(rdata) for rdata in answers]}")
+                    return True
                 except Exception as e:
-                    if 'net::ERR_NAME_NOT_RESOLVED' in str(e):
-                        logger.warning(f"DNS 解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                    else:
-                        logger.warning(f"检查商品可用性时出错 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                    
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                        continue
-                    else:
-                        logger.error(f"检查商品可用性失败，已达到最大重试次数: {str(e)}")
-                        return False
+                    logger.warning(f"使用 {dns_name} ({dns_ip}) 解析失败: {str(e)}")
+            
+            # 如果所有 DNS 服务器都失败，尝试使用系统默认 DNS
+            ip = socket.gethostbyname(domain)
+            logger.info(f"使用系统 DNS 解析 {domain}: {ip}")
+            return True
+        except Exception as e:
+            logger.error(f"DNS 解析失败: {str(e)}")
+            return False
 
+    @staticmethod
+    def check_network(url):
+        """检查网络连接"""
+        try:
+            domain = url.split('/')[2]
+            
+            # 检查 DNS 解析
+            if not Monitor.check_dns(domain):
+                return False
+            
+            # 尝试 ping
+            try:
+                result = subprocess.run(['ping', '-c', '1', '-W', '5', domain], 
+                                     capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info(f"Ping {domain} 成功")
+                    return True
+                else:
+                    logger.warning(f"Ping {domain} 失败: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Ping 执行失败: {str(e)}")
+            
+            # 如果 ping 失败，尝试 curl
+            try:
+                result = subprocess.run(['curl', '-I', '-s', '-m', '10', url], 
+                                     capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info(f"Curl {url} 成功")
+                    return True
+                else:
+                    logger.warning(f"Curl {url} 失败: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Curl 执行失败: {str(e)}")
+            
+            return False
+        except Exception as e:
+            logger.error(f"网络检查失败: {str(e)}")
+            return False
+
+    @staticmethod
+    async def check_product_availability(url, session):
+        """检查商品是否可购买"""
+        try:
+            # 首先检查网络连接
+            if not Monitor.check_network(url):
+                logger.error("网络连接检查失败")
+                return False
+            
+            driver = None
+            try:
+                driver = Monitor.create_driver()
+                if not driver:
+                    logger.error("无法创建 WebDriver")
+                    return False
+
+                # 设置页面加载超时
+                driver.set_page_load_timeout(30)
+                driver.set_script_timeout(30)
+
+                # 添加重试机制
+                max_retries = 3
+                retry_delay = 2
+
+                for attempt in range(max_retries):
+                    try:
+                        # 清除所有 cookies
+                        driver.delete_all_cookies()
+                        
+                        # 获取域名
+                        main_domain = url.split('/')[2]
+                        
+                        # 设置自定义 DNS
+                        driver.execute_cdp_cmd('Network.setDNSClientResolver', {
+                            'nameservers': ['8.8.8.8', '1.1.1.1']
+                        })
+                        
+                        # 先访问主域名以建立连接
+                        driver.get(f'https://{main_domain}')
+                        
+                        # 等待一下以确保连接建立
+                        time.sleep(2)
+                        
+                        # 然后访问实际的 URL
+                        driver.get(url)
+                        
+                        # 等待页面加载完成
+                        WebDriverWait(driver, 30).until(
+                            lambda d: d.execute_script('return document.readyState') == 'complete'
+                        )
+                        
+                        # 检查是否有购买按钮
+                        buy_button = driver.find_element(By.CSS_SELECTOR, '[data-testid="AddToCartButton"]')
+                        return not ('disabled' in buy_button.get_attribute('class').lower() or 
+                                  'sold' in buy_button.get_attribute('class').lower())
+                        
+                    except Exception as e:
+                        if 'net::ERR_NAME_NOT_RESOLVED' in str(e):
+                            logger.warning(f"DNS 解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                        else:
+                            logger.warning(f"检查商品可用性时出错 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                        
+                        if attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        else:
+                            logger.error(f"检查商品可用性失败，已达到最大重试次数: {str(e)}")
+                            return False
+
+            except Exception as e:
+                logger.error(f"检查商品可用性时出错: {str(e)}")
+                return False
+                
+            finally:
+                try:
+                    if driver:
+                        driver.quit()
+                except:
+                    pass
+
+            return False
+            
         except Exception as e:
             logger.error(f"检查商品可用性时出错: {str(e)}")
             return False
-            
-        finally:
-            try:
-                if driver:
-                    driver.quit()
-            except:
-                pass
-
-        return False
 
     @staticmethod
     async def check_product_availability_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
