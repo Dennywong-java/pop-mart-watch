@@ -53,34 +53,18 @@ class Monitor:
         self.data_file = os.path.join(self.data_dir, "monitored_items.json")
         self._load_monitored_items()
     
-    # 可购买状态的关键词
+   # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
         'ADD TO BAG',
         'add to bag',
-        'add to cart',
-        'buy now',
-        'purchase',
-        'checkout',
-        'in stock',
-        'add to shopping bag',
         'add to my bag',
-        'Add to Cart',
-        'BUY NOW'
+        'ADD TO MY BAG',
+        'BUY NOW',
     ]
     
     # 售罄状态的关键词
     SOLD_OUT_KEYWORDS = [
-        'SOLD OUT',
-        'sold out',
-        'out of stock',
-        'notify me when available',
         'NOTIFY ME WHEN AVAILABLE',
-        'currently unavailable',
-        'not available',
-        'Item Unavailable',
-        'item unavailable',
-        'Unavailable',
-        'Item unavailable'
     ]
     
     # 即将发售关键词
@@ -455,211 +439,167 @@ class Monitor:
     async def check_item_status(self, url: str) -> Tuple[ProductStatus, Optional[str]]:
         """检查商品状态"""
         driver = None
-        try:
-            # 创建 Chrome WebDriver
-            driver = Monitor.create_driver()
-            if not driver:
-                logger.error("无法创建 WebDriver")
-                return ProductStatus.UNKNOWN, None
-            
+        max_retries = 2  # 最大重试次数
+        retry_count = 0
+        
+        while retry_count <= max_retries:
             try:
-                # 设置更短的页面加载超时
-                driver.set_page_load_timeout(15)  # 减少到15秒
-                driver.set_script_timeout(10)     # 设置脚本执行超时
-                
-                # 访问商品页面
-                driver.get(url)
-                
-                # 使用更短的等待时间和更快的检查方式
-                try:
-                    # 等待 body 元素出现，使用更短的超时时间
-                    WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
-                    )
-                    
-                    # 使用JavaScript检查页面加载状态，带有超时控制
-                    async def wait_for_page_load():
-                        try:
-                            # 使用asyncio.wait_for代替asyncio.timeout
-                            async def check_ready_state():
-                                while True:
-                                    try:
-                                        ready_state = driver.execute_script("return document.readyState")
-                                        if ready_state == "complete":
-                                            break
-                                        await asyncio.sleep(0.5)  # 减少检查间隔
-                                    except Exception as e:
-                                        logger.warning(f"检查页面状态时出错: {str(e)}")
-                                        break
-                            
-                            await asyncio.wait_for(check_ready_state(), timeout=10)
-                        except asyncio.TimeoutError:
-                            logger.warning("等待页面加载完成超时")
-                        except Exception as e:
-                            logger.warning(f"等待页面加载时出错: {str(e)}")
-                    
-                    await wait_for_page_load()
-                    
-                except TimeoutException:
-                    logger.warning("等待页面元素超时，尝试继续处理")
-                
-                # 获取页面内容
-                try:
-                    html = driver.page_source
-                    html_lower = html.lower()
-                except Exception as e:
-                    logger.error(f"获取页面内容时出错: {str(e)}")
+                # 创建 Chrome WebDriver
+                driver = Monitor.create_driver()
+                if not driver:
+                    logger.error("无法创建 WebDriver")
                     return ProductStatus.UNKNOWN, None
                 
-                # 记录页面内容用于调试（减少日志大小）
-                content_sample = html[:2000] if len(html) > 2000 else html  # 减少样本大小
-                logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
-                
-                # 检查是否是404页面
-                not_found_indicators = [
-                    "404",
-                    "page not found",
-                    "找不到页面",
-                    "页面不存在",
-                    "product is not available",
-                    "product not found"
-                ]
-                
-                is_404 = False
                 try:
-                    async def check_404_status():
-                        nonlocal is_404
-                        try:
-                            # 1. 检查HTTP状态码
-                            try:
-                                status_code = driver.execute_script("return window.performance.getEntries()[0].responseStatus")
-                                if status_code == 404:
-                                    is_404 = True
-                                    logger.info(f"确认页面返回404 - HTTP状态码为404")
-                                    return
-                            except Exception as e:
-                                logger.warning(f"检查HTTP状态码时出错: {str(e)}")
-                            
-                            # 2. 快速检查URL和标题
-                            try:
-                                current_url = driver.current_url.lower()
-                                title = driver.title.lower()
-                                
-                                if "404" in current_url or "error" in current_url:
-                                    is_404 = True
-                                    logger.info(f"确认页面返回404 - URL包含错误标识: {current_url}")
-                                    return
-                                
-                                if "404" in title or "not found" in title or "error" in title:
-                                    is_404 = True
-                                    logger.info(f"确认页面返回404 - 页面标题包含错误标识: {title}")
-                                    return
-                            except Exception as e:
-                                logger.warning(f"检查URL和标题时出错: {str(e)}")
-                            
-                            # 3. 快速检查关键元素
-                            try:
-                                missing_elements = 0
-                                key_elements = [
-                                    "//h1[contains(@class, 'product-title')]",
-                                    "//*[contains(@class, 'price')]",
-                                    "//button[contains(@class, 'add-to-cart')]"
-                                ]
-                                
-                                for xpath in key_elements:
-                                    if not driver.find_elements(By.XPATH, xpath):
-                                        missing_elements += 1
-                                
-                                if missing_elements >= 2:
-                                    # 快速检查404文本
-                                    for indicator in not_found_indicators:
-                                        if indicator.lower() in html_lower:
-                                            is_404 = True
-                                            logger.info(f"确认页面返回404 - 缺失关键元素且包含错误文本")
-                                            return
-                            except Exception as e:
-                                logger.warning(f"检查关键元素时出错: {str(e)}")
-                        
-                        except Exception as e:
-                            logger.warning(f"404状态检查时出错: {str(e)}")
+                    # 设置更短的页面加载超时
+                    driver.set_page_load_timeout(10)  # 进一步减少到10秒
+                    driver.set_script_timeout(5)      # 减少脚本超时
                     
-                    # 使用wait_for代替timeout
-                    await asyncio.wait_for(check_404_status(), timeout=8)
-                
-                except asyncio.TimeoutError:
-                    logger.warning("404检查超时")
-                except Exception as e:
-                    logger.warning(f"404状态检查出错: {str(e)}")
-                
-                if is_404:
-                    return ProductStatus.OFF_SHELF, None
-                
-                # 使用更高效的状态检查方式
-                async def check_status():
+                    # 访问商品页面
+                    driver.get(url)
+                    
+                    # 使用更短的等待时间和更快的检查方式
+                    try:
+                        # 等待 body 元素出现，使用更短的超时时间
+                        WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                        
+                        # 使用JavaScript检查页面加载状态，带有超时控制
+                        async def wait_for_page_load():
+                            try:
+                                async def check_ready_state():
+                                    for _ in range(10):  # 最多尝试10次
+                                        try:
+                                            ready_state = driver.execute_script("return document.readyState")
+                                            if ready_state == "complete":
+                                                return True
+                                            await asyncio.sleep(0.3)  # 减少检查间隔
+                                        except Exception:
+                                            break
+                                    return False
+                                
+                                # 使用更短的超时时间
+                                await asyncio.wait_for(check_ready_state(), timeout=5)
+                            except asyncio.TimeoutError:
+                                logger.warning("等待页面加载完成超时")
+                            except Exception as e:
+                                logger.warning(f"等待页面加载时出错: {str(e)}")
+                        
+                        await wait_for_page_load()
+                        
+                    except TimeoutException:
+                        logger.warning("等待页面元素超时，尝试继续处理")
+                    
+                    # 获取页面内容
+                    try:
+                        html = driver.page_source
+                        if not html:
+                            raise ValueError("页面内容为空")
+                        html_lower = html.lower()
+                    except Exception as e:
+                        logger.error(f"获取页面内容时出错: {str(e)}")
+                        if retry_count < max_retries:
+                            retry_count += 1
+                            continue
+                        return ProductStatus.UNKNOWN, None
+                    
+                    # 检查是否是404页面
+                    not_found_indicators = [
+                        "404",
+                        "page not found",
+                        "找不到页面",
+                        "页面不存在",
+                        "product is not available",
+                        "product not found"
+                    ]
+                    
+                    # 快速检查404状态
+                    try:
+                        # 1. 检查URL和标题
+                        current_url = driver.current_url.lower()
+                        title = driver.title.lower()
+                        
+                        if any(x in current_url or x in title for x in ["404", "error", "not found"]):
+                            return ProductStatus.OFF_SHELF, None
+                        
+                        # 2. 检查页面内容
+                        if any(x in html_lower for x in not_found_indicators):
+                            return ProductStatus.OFF_SHELF, None
+                        
+                    except Exception as e:
+                        logger.warning(f"检查404状态时出错: {str(e)}")
+                    
+                    # 快速检查商品状态
                     try:
                         # 售罄状态
-                        for keyword in Monitor.SOLD_OUT_KEYWORDS:
-                            if keyword.lower() in html_lower:
-                                return ProductStatus.SOLD_OUT, None
-                        
-                        # 即将发售状态
-                        for keyword in Monitor.COMING_SOON_KEYWORDS:
-                            if keyword.lower() in html_lower:
-                                return ProductStatus.COMING_SOON, None
+                        if "NOTIFY ME WHEN AVAILABLE" in html:
+                            return ProductStatus.SOLD_OUT, None
                         
                         # 可购买状态
-                        for keyword in Monitor.AVAILABLE_KEYWORDS:
-                            if keyword.lower() in html_lower:
-                                # 快速提取价格
-                                price = None
-                                try:
-                                    price_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'price') or contains(text(), '$')]")
-                                    for elem in price_elements:
-                                        if '$' in elem.text:
-                                            price = elem.text.strip()
-                                            break
-                                except Exception as e:
-                                    logger.warning(f"提取价格时出错: {str(e)}")
-                                return ProductStatus.IN_STOCK, price
+                        buy_keywords = ['ADD TO BAG', 'add to bag', 'add to my bag', 'ADD TO MY BAG', 'BUY NOW']
+                        if any(keyword in html for keyword in buy_keywords):
+                            # 快速提取价格
+                            price = None
+                            try:
+                                price_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'price') or contains(text(), '$')]")
+                                for elem in price_elements:
+                                    if '$' in elem.text:
+                                        price = elem.text.strip()
+                                        break
+                            except Exception as e:
+                                logger.warning(f"提取价格时出错: {str(e)}")
+                            return ProductStatus.IN_STOCK, price
                         
                         return ProductStatus.UNKNOWN, None
+                        
                     except Exception as e:
-                        logger.warning(f"状态检查时出错: {str(e)}")
+                        logger.warning(f"检查商品状态时出错: {str(e)}")
+                        if retry_count < max_retries:
+                            retry_count += 1
+                            continue
                         return ProductStatus.UNKNOWN, None
-                
-                # 使用wait_for代替timeout
-                try:
-                    return await asyncio.wait_for(check_status(), timeout=5)
-                except asyncio.TimeoutError:
-                    logger.warning("状态检查超时")
+                    
+                except TimeoutException:
+                    logger.error(f"页面加载超时: {url}")
+                    if retry_count < max_retries:
+                        retry_count += 1
+                        continue
                     return ProductStatus.UNKNOWN, None
-                except Exception as e:
-                    logger.warning(f"状态检查出错: {str(e)}")
+                    
+                except WebDriverException as e:
+                    logger.error(f"WebDriver 错误: {str(e)}")
+                    if retry_count < max_retries:
+                        retry_count += 1
+                        continue
                     return ProductStatus.UNKNOWN, None
-                
-            except TimeoutException:
-                logger.error(f"页面加载超时: {url}")
+                    
+                finally:
+                    if driver:
+                        try:
+                            driver.quit()
+                        except Exception as e:
+                            logger.warning(f"关闭WebDriver时出错: {str(e)}")
+                    
+            except Exception as e:
+                logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
+                logger.error(f"错误类型: {type(e).__name__}")
+                if retry_count < max_retries:
+                    retry_count += 1
+                    continue
                 return ProductStatus.UNKNOWN, None
-            except WebDriverException as e:
-                logger.error(f"WebDriver 错误: {str(e)}")
-                return ProductStatus.UNKNOWN, None
+            
             finally:
                 if driver:
                     try:
                         driver.quit()
-                    except Exception as e:
-                        logger.warning(f"关闭WebDriver时出错: {str(e)}")
-                    
-        except Exception as e:
-            logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
-            logger.error(f"错误类型: {type(e).__name__}")
-            logger.error(f"错误详情: {traceback.format_exc()}")
-            if driver:
-                try:
-                    driver.quit()
-                except Exception as e:
-                    logger.warning(f"关闭WebDriver时出错: {str(e)}")
-            return ProductStatus.UNKNOWN, None
+                    except:
+                        pass
+            
+            # 如果执行到这里，说明成功完成了检查
+            break
+            
+        return ProductStatus.UNKNOWN, None
 
     async def check_all_items(self) -> list:
         """检查所有商品的状态"""
