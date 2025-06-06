@@ -652,7 +652,10 @@ class Monitor:
         notifications = []
         current_time = datetime.now().isoformat()
         
-        for url, item in self.monitored_items.items():
+        # 创建字典的副本进行遍历
+        items_to_check = dict(self.monitored_items)
+        
+        for url, item in items_to_check.items():
             # 获取当前状态
             current_status, price = await self.check_item_status(url)
             previous_status = item.get('last_status', ProductStatus.UNKNOWN.value)
@@ -668,37 +671,39 @@ class Monitor:
             if current_status.value != previous_status:
                 logger.info(f"  状态变化: {previous_status} -> {current_status.value}")
                 
-                # 更新商品信息
-                item.update({
-                    'last_status': current_status.value,
-                    'last_check': current_time,
-                    'last_notification': current_time,
-                    'price': price
-                })
+                # 更新原始字典中的商品信息
+                if url in self.monitored_items:  # 确保URL仍然存在
+                    self.monitored_items[url].update({
+                        'last_status': current_status.value,
+                        'last_check': current_time,
+                        'last_notification': current_time,
+                        'price': price
+                    })
                 
-                # 生成通知消息
-                status_messages = {
-                    ProductStatus.IN_STOCK.value: f"🟢 商品已上架！{f'价格: {price}' if price else ''}",
-                    ProductStatus.SOLD_OUT.value: "🔴 商品已售罄",
-                    ProductStatus.COMING_SOON.value: "🟡 商品即将发售",
-                    ProductStatus.OFF_SHELF.value: "⚫ 商品已下架",
-                    ProductStatus.UNKNOWN.value: "❓ 商品状态未知"
-                }
-                
-                notification = {
-                    'url': url,
-                    'name': item['name'],
-                    'status': current_status.value,
-                    'message': status_messages.get(current_status.value, "状态未知"),
-                    'price': price,
-                    'icon_url': item.get('icon_url')
-                }
-                notifications.append(notification)
+                    # 生成通知消息
+                    status_messages = {
+                        ProductStatus.IN_STOCK.value: f"🟢 商品已上架！{f'价格: {price}' if price else ''}",
+                        ProductStatus.SOLD_OUT.value: "🔴 商品已售罄",
+                        ProductStatus.COMING_SOON.value: "🟡 商品即将发售",
+                        ProductStatus.OFF_SHELF.value: "⚫ 商品已下架",
+                        ProductStatus.UNKNOWN.value: "❓ 商品状态未知"
+                    }
+                    
+                    notification = {
+                        'url': url,
+                        'name': item['name'],
+                        'status': current_status.value,
+                        'message': status_messages.get(current_status.value, "状态未知"),
+                        'price': price,
+                        'icon_url': item.get('icon_url')
+                    }
+                    notifications.append(notification)
             else:
                 # 仅更新检查时间
-                item['last_check'] = current_time
-            
-            # 保存更新后的数据
-            self._save_monitored_items()
+                if url in self.monitored_items:  # 确保URL仍然存在
+                    self.monitored_items[url]['last_check'] = current_time
+        
+        # 保存更新后的数据
+        self._save_monitored_items()
         
         return notifications 
