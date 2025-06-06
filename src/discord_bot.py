@@ -36,9 +36,13 @@ class DiscordBot(discord.Client):
         
     def setup_commands(self):
         """设置斜杠命令"""
+        # 清除现有命令
+        self.tree.clear_commands()
+        
         @self.tree.command(
             name="watch",
-            description="添加商品到监控列表"
+            description="添加商品到监控列表",
+            guild=discord.Object(id=self.config.discord.guild_id)  # 将命令注册到特定服务器
         )
         @app_commands.describe(
             url="商品页面的 URL"
@@ -82,7 +86,8 @@ class DiscordBot(discord.Client):
         
         @self.tree.command(
             name="unwatch",
-            description="从监控列表中移除商品"
+            description="从监控列表中移除商品",
+            guild=discord.Object(id=self.config.discord.guild_id)  # 将命令注册到特定服务器
         )
         @app_commands.describe(
             url="要移除的商品 URL"
@@ -101,7 +106,8 @@ class DiscordBot(discord.Client):
         
         @self.tree.command(
             name="list",
-            description="显示所有正在监控的商品"
+            description="显示所有正在监控的商品",
+            guild=discord.Object(id=self.config.discord.guild_id)  # 将命令注册到特定服务器
         )
         async def list_items(interaction: discord.Interaction):
             try:
@@ -144,7 +150,8 @@ class DiscordBot(discord.Client):
         
         @self.tree.command(
             name="status",
-            description="显示机器人状态"
+            description="显示机器人状态",
+            guild=discord.Object(id=self.config.discord.guild_id)  # 将命令注册到特定服务器
         )
         async def status(interaction: discord.Interaction):
             try:
@@ -156,6 +163,8 @@ class DiscordBot(discord.Client):
             except Exception as e:
                 logger.error(f"显示状态时出错: {str(e)}")
                 await interaction.response.send_message(f"显示状态时出错: {str(e)}")
+                
+        logger.info("命令设置完成")
     
     async def setup_hook(self):
         """设置钩子"""
@@ -163,24 +172,46 @@ class DiscordBot(discord.Client):
         
         # 同步命令到服务器
         try:
-            # 先同步到指定服务器
+            logger.info(f"开始同步命令到服务器 {self.config.discord.guild_id}")
+            
+            # 同步命令到指定服务器
+            logger.info("同步命令到指定服务器...")
             await self.tree.sync(guild=discord.Object(id=self.config.discord.guild_id))
             guild_commands = await self.tree.fetch_commands(guild=discord.Object(id=self.config.discord.guild_id))
-            logger.info(f"斜杠命令已同步到服务器 {self.config.discord.guild_id}，共 {len(guild_commands)} 个命令")
+            logger.info(f"服务器命令同步完成，共 {len(guild_commands)} 个命令")
             
             # 同步全局命令
+            logger.info("同步全局命令...")
             await self.tree.sync()
             global_commands = await self.tree.fetch_commands()
-            logger.info(f"斜杠命令已全局同步，共 {len(global_commands)} 个命令")
+            logger.info(f"全局命令同步完成，共 {len(global_commands)} 个命令")
             
             # 输出所有已注册的命令
             logger.info("已注册的命令：")
-            for command in guild_commands:
-                logger.info(f"[服务器] /{command.name} - {command.description}")
-            for command in global_commands:
-                logger.info(f"[全局] /{command.name} - {command.description}")
+            if guild_commands:
+                for command in guild_commands:
+                    logger.info(f"[服务器] /{command.name} - {command.description}")
+            else:
+                logger.warning("服务器中没有注册的命令")
+                
+            if global_commands:
+                for command in global_commands:
+                    logger.info(f"[全局] /{command.name} - {command.description}")
+            else:
+                logger.warning("没有注册的全局命令")
+                
+        except discord.errors.Forbidden as e:
+            logger.error(f"权限错误: {str(e)}")
+            logger.error("请确保机器人有 applications.commands 权限")
+            return
+        except discord.errors.HTTPException as e:
+            logger.error(f"HTTP 错误: {str(e)}")
+            logger.error("可能是 Discord API 限制或网络问题")
+            return
         except Exception as e:
             logger.error(f"同步命令时出错: {str(e)}")
+            logger.error(f"错误类型: {type(e).__name__}")
+            logger.error(f"错误详情: {traceback.format_exc()}")
             return
         
         logger.info("机器人设置完成")
