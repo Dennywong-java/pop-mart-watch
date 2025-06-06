@@ -17,6 +17,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ class Monitor:
         try:
             # 配置 Chrome 选项
             options = webdriver.ChromeOptions()
-            options.add_argument('--headless')  # 无头模式
+            options.add_argument('--headless=new')  # 使用新的无头模式
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
@@ -159,24 +160,8 @@ class Monitor:
             if os.uname().machine == 'arm64':
                 options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             
-            # 安装并获取 ChromeDriver，指定特定版本和架构
-            driver_manager = ChromeDriverManager()
-            if os.uname().machine == 'arm64':
-                driver_manager.driver_cache_path = os.path.join(os.path.expanduser('~'), '.wdm', 'drivers', 'chromedriver', 'mac-arm64')
-            
-            driver_path = driver_manager.install()
-            
-            # 确保 driver_path 指向正确的可执行文件
-            if os.path.isdir(driver_path):
-                possible_paths = [
-                    os.path.join(driver_path, 'chromedriver'),
-                    os.path.join(driver_path, 'chromedriver-mac-arm64', 'chromedriver'),
-                    os.path.join(driver_path, 'chromedriver-mac-x64', 'chromedriver')
-                ]
-                for path in possible_paths:
-                    if os.path.isfile(path) and os.access(path, os.X_OK):
-                        driver_path = path
-                        break
+            # 使用 ChromeDriverManager 安装并获取正确版本的 ChromeDriver
+            driver_path = ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
             
             logger.info(f"使用 ChromeDriver 路径: {driver_path}")
             
