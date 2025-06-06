@@ -139,7 +139,7 @@ class Monitor:
             'name': name
         }
 
-    async def add_monitored_item(self, url: str, name: str) -> bool:
+    async def add_monitored_item(self, url: str, name: str, icon_url: str = None) -> bool:
         """添加商品到监控列表"""
         if url in self.monitored_items:
             return False
@@ -148,7 +148,8 @@ class Monitor:
             'name': name,
             'last_status': ProductStatus.UNKNOWN.value,
             'last_check': None,
-            'last_notification': None
+            'last_notification': None,
+            'icon_url': icon_url
         }
         self._save_monitored_items()
         return True
@@ -507,7 +508,8 @@ class Monitor:
                     'name': item['name'],
                     'status': current_status.value,
                     'message': status_messages.get(current_status.value, "状态未知"),
-                    'price': price
+                    'price': price,
+                    'icon_url': item.get('icon_url')
                 }
                 notifications.append(notification)
             else:

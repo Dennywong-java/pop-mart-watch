@@ -34,6 +34,18 @@ class DiscordBot(discord.Client):
         # 注册命令
         self.setup_commands()
         
+    @staticmethod
+    def is_valid_image_url(url: str) -> bool:
+        """验证图片 URL 格式是否合法"""
+        if not url:
+            return False
+            
+        # 支持的图片格式
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+        
+        # 检查 URL 是否以支持的图片格式结尾（不区分大小写）
+        return url.lower().endswith(valid_extensions)
+
     def setup_commands(self):
         """设置斜杠命令"""
         # 清除现有命令
@@ -45,14 +57,22 @@ class DiscordBot(discord.Client):
             guild=discord.Object(id=self.config.discord.guild_id)  # 将命令注册到特定服务器
         )
         @app_commands.describe(
-            url="商品页面的 URL"
+            url="商品页面的 URL",
+            icon_url="商品图片的 URL（可选，支持 jpg/jpeg/png/gif/webp）"
         )
-        async def watch(interaction: discord.Interaction, url: str):
+        async def watch(interaction: discord.Interaction, url: str, icon_url: str = None):
             try:
                 # 验证 URL
                 if not any(domain in url for domain in self.config.monitor.allowed_domains):
                     await interaction.response.send_message(
                         f"不支持的域名。允许的域名: {', '.join(self.config.monitor.allowed_domains)}"
+                    )
+                    return
+                
+                # 验证图片 URL（如果提供）
+                if icon_url and not self.is_valid_image_url(icon_url):
+                    await interaction.response.send_message(
+                        "不支持的图片格式。支持的格式：jpg、jpeg、png、gif、webp"
                     )
                     return
                 
@@ -64,7 +84,7 @@ class DiscordBot(discord.Client):
                     return
                 
                 # 添加到监控列表
-                success = await self.monitor.add_monitored_item(url, product_info['name'])
+                success = await self.monitor.add_monitored_item(url, product_info['name'], icon_url)
                 if success:
                     # 构建嵌入消息
                     embed = discord.Embed(
@@ -74,6 +94,14 @@ class DiscordBot(discord.Client):
                     )
                     embed.add_field(name="商品 ID", value=product_info['id'], inline=True)
                     embed.add_field(name="URL", value=url, inline=False)
+                    
+                    # 设置图片
+                    if icon_url:
+                        try:
+                            embed.set_thumbnail(url=icon_url)
+                            logger.info(f"成功设置商品图片: {icon_url}")
+                        except Exception as e:
+                            logger.warning(f"设置商品图片失败: {str(e)}")
                     
                     await interaction.response.send_message(embed=embed)
                     logger.info(f"添加商品到监控列表: {product_info['name']} (ID: {product_info['id']})")
@@ -128,14 +156,19 @@ class DiscordBot(discord.Client):
                 for url, item in self.monitor.monitored_items.items():
                     try:
                         product_info = Monitor.parse_product_info(url)
-                        status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
+                        status = "可购买 ✅" if item.get('last_status') == "in_stock" else "已售罄 ❌"
                         embed.add_field(
                             name=f"{item['name']} (ID: {product_info['id']})",
                             value=f"状态: {status}\n{url}",
                             inline=False
                         )
+                        
+                        # 设置图片（使用第一个商品的图片作为消息的缩略图）
+                        if item.get('icon_url') and not embed.thumbnail:
+                            embed.set_thumbnail(url=item['icon_url'])
+                            
                     except:
-                        status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
+                        status = "可购买 ✅" if item.get('last_status') == "in_stock" else "已售罄 ❌"
                         embed.add_field(
                             name=item['name'],
                             value=f"状态: {status}\n{url}",
@@ -228,38 +261,28 @@ class DiscordBot(discord.Client):
         """监控商品状态"""
         while True:
             try:
-                for url, item in self.monitor.monitored_items.items():
-                    try:
-                        # 检查商品状态
-                        is_available = await self.monitor.check_product_availability_with_delay(
-                            url, self.config.monitor.request_delay
-                        )
-                        
-                        # 如果状态改变，发送通知
-                        if is_available != item.get('last_status'):
-                            item['last_status'] = is_available
-                            self.monitor.save_monitored_items()
-                            
-                            # 获取商品信息
-                            try:
-                                product_info = Monitor.parse_product_info(url)
-                                product_name = f"{item['name']} (ID: {product_info['id']})"
-                            except:
-                                product_name = item['name']
-                            
-                            # 构建嵌入消息
-                            embed = discord.Embed(
-                                title="商品状态更新",
-                                description=product_name,
-                                color=discord.Color.green() if is_available else discord.Color.red()
-                            )
-                            embed.add_field(name="状态", value="可购买 ✅" if is_available else "已售罄 ❌", inline=True)
-                            embed.add_field(name="URL", value=url, inline=False)
-                            
-                            await self.send_notification(embed=embed)
-                            
-                    except Exception as e:
-                        logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
+                # 检查所有商品状态并获取需要通知的更新
+                notifications = await self.monitor.check_all_items()
+                
+                # 发送所有需要的通知
+                for notification in notifications:
+                    embed = discord.Embed(
+                        title="商品状态更新",
+                        description=notification['name'],
+                        url=notification['url'],
+                        color=self._get_status_color(notification['status'])
+                    )
+                    
+                    embed.add_field(name="状态", value=notification['message'], inline=True)
+                    if notification.get('price'):
+                        embed.add_field(name="价格", value=notification['price'], inline=True)
+                    embed.add_field(name="URL", value=notification['url'], inline=False)
+                    
+                    # 设置图片
+                    if notification.get('icon_url'):
+                        embed.set_thumbnail(url=notification['icon_url'])
+                    
+                    await self.send_notification(embed=embed)
                 
                 # 等待下一次检查
                 await asyncio.sleep(self.config.monitor.check_interval)
