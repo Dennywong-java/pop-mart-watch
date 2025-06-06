@@ -183,56 +183,42 @@ class Monitor:
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-setuid-sandbox')
+            options.add_argument('--disable-software-rasterizer')
             
-            # 完全禁用用户数据目录和缓存
-            options.add_argument('--incognito')  # 使用隐身模式
-            options.add_argument('--disable-application-cache')
-            options.add_argument(f'--crash-dumps-dir={temp_dir}')
-            options.add_argument('--disable-sync')
-            options.add_argument('--disable-web-security')
-            options.add_argument('--disable-site-isolation-trials')
-            options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-            
-            # 内存优化配置
-            options.add_argument('--single-process')
-            options.add_argument('--disable-application-cache')
-            options.add_argument('--aggressive-cache-discard')
-            options.add_argument('--disable-cache')
-            options.add_argument('--disable-offline-load-stale-cache')
-            options.add_argument('--disk-cache-size=0')
-            options.add_argument('--media-cache-size=0')
-            options.add_argument('--disable-component-extensions-with-background-pages')
-            options.add_argument('--disable-default-apps')
-            options.add_argument('--disable-background-networking')
-            options.add_argument('--disable-background-timer-throttling')
-            options.add_argument('--disable-backgrounding-occluded-windows')
-            options.add_argument('--disable-breakpad')
-            options.add_argument('--disable-client-side-phishing-detection')
-            options.add_argument('--disable-component-update')
-            options.add_argument('--disable-domain-reliability')
-            options.add_argument('--disable-features=TranslateUI')
-            options.add_argument('--disable-field-trial-config')
-            options.add_argument('--disable-fine-grained-time-zone-detection')
-            options.add_argument('--disable-hang-monitor')
-            options.add_argument('--disable-ipc-flooding-protection')
-            options.add_argument('--disable-notifications')
-            options.add_argument('--disable-popup-blocking')
-            options.add_argument('--disable-prompt-on-repost')
-            options.add_argument('--disable-renderer-backgrounding')
-            options.add_argument('--disable-sync')
-            options.add_argument('--disable-translate')
-            options.add_argument('--disable-windows10-custom-titlebar')
-            options.add_argument('--ignore-certificate-errors')
+            # 用户数据目录配置
             options.add_argument('--no-first-run')
             options.add_argument('--no-default-browser-check')
-            options.add_argument('--no-experiments')
-            options.add_argument('--no-pings')
-            options.add_argument('--no-service-autorun')
-            options.add_argument('--no-zygote')
             options.add_argument('--password-store=basic')
             options.add_argument('--use-mock-keychain')
-            options.add_argument('--window-size=1280,720')
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            options.add_argument(f'--user-data-dir=/dev/null')  # 完全禁用用户数据目录
+            options.add_argument('--disk-cache-dir=/dev/null')  # 禁用磁盘缓存
+            options.add_argument('--disk-cache-size=1')  # 最小化磁盘缓存
+            options.add_argument('--media-cache-size=1')  # 最小化媒体缓存
+            options.add_argument('--aggressive-cache-discard')  # 激进的缓存清理
+            
+            # 性能优化
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-software-rasterizer')
+            options.add_argument('--disable-gpu-sandbox')
+            options.add_argument('--disable-gpu-compositing')
+            options.add_argument('--disable-gpu-program-cache')
+            options.add_argument('--disable-gpu-watchdog')
+            options.add_argument('--disable-webgl')
+            options.add_argument('--disable-webgl2')
+            options.add_argument('--disable-gl-extensions')
+            
+            # 禁用不必要的功能
+            options.add_argument('--disable-logging')
+            options.add_argument('--disable-in-process-stack-traces')
+            options.add_argument('--disable-login-animations')
+            options.add_argument('--disable-modal-animations')
+            options.add_argument('--disable-reading-from-canvas')
+            options.add_argument('--disable-site-isolation-trials')
+            options.add_argument('--disable-smooth-scrolling')
+            options.add_argument('--disable-speech-api')
+            options.add_argument('--disable-web-security')
+            options.add_argument('--disable-databases')
             
             # 设置页面加载策略
             options.page_load_strategy = 'eager'
@@ -243,24 +229,29 @@ class Monitor:
             
             # 禁用图片和其他媒体加载
             prefs = {
-                'profile.managed_default_content_settings.images': 2,  # 禁用图片
-                'profile.managed_default_content_settings.media_stream': 2,  # 禁用媒体流
-                'profile.managed_default_content_settings.plugins': 2,  # 禁用插件
-                'profile.default_content_settings.popups': 2,  # 禁用弹窗
-                'profile.managed_default_content_settings.notifications': 2,  # 禁用通知
-                'profile.managed_default_content_settings.automatic_downloads': 2,  # 禁用自动下载
-                'profile.managed_default_content_settings.cookies': 2,  # 禁用Cookie
-                'profile.managed_default_content_settings.javascript': 1,  # 启用JavaScript
-                'profile.managed_default_content_settings.geolocation': 2,  # 禁用地理位置
-                'profile.default_content_setting_values.notifications': 2,  # 禁用通知
-                'profile.default_content_setting_values.media_stream_mic': 2,  # 禁用麦克风
-                'profile.default_content_setting_values.media_stream_camera': 2,  # 禁用摄像头
-                'profile.default_content_setting_values.geolocation': 2,  # 禁用地理位置
-                'profile.default_content_setting_values.cookies': 2,  # 禁用Cookie
-                'download.default_directory': temp_dir,  # 设置下载目录
-                'download.prompt_for_download': False,  # 禁用下载提示
+                'profile.managed_default_content_settings.images': 2,
+                'profile.managed_default_content_settings.media_stream': 2,
+                'profile.managed_default_content_settings.plugins': 2,
+                'profile.default_content_settings.popups': 2,
+                'profile.managed_default_content_settings.notifications': 2,
+                'profile.managed_default_content_settings.automatic_downloads': 2,
+                'profile.managed_default_content_settings.cookies': 2,
+                'profile.managed_default_content_settings.javascript': 1,
+                'profile.managed_default_content_settings.geolocation': 2,
+                'profile.default_content_setting_values.notifications': 2,
+                'profile.default_content_setting_values.media_stream_mic': 2,
+                'profile.default_content_setting_values.media_stream_camera': 2,
+                'profile.default_content_setting_values.geolocation': 2,
+                'profile.default_content_setting_values.cookies': 2,
+                'download.default_directory': temp_dir,
+                'download.prompt_for_download': False,
                 'download.directory_upgrade': True,
-                'safebrowsing.enabled': False  # 禁用安全浏览
+                'safebrowsing.enabled': False,
+                'credentials_enable_service': False,
+                'password_manager_enabled': False,
+                'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
+                'webrtc.multiple_routes_enabled': False,
+                'webrtc.nonproxied_udp_enabled': False
             }
             options.add_experimental_option('prefs', prefs)
             
@@ -282,14 +273,33 @@ class Monitor:
             
             for attempt in range(max_retries):
                 try:
+                    # 在每次尝试前清理可能存在的 Chrome 进程
+                    try:
+                        os.system('pkill -f chrome')
+                        time.sleep(1)  # 等待进程完全终止
+                    except:
+                        pass
+                    
                     service = Service()
+                    service.creation_flags = 0x08000000  # 禁用窗口
+                    
                     driver = webdriver.Chrome(service=service, options=options)
                     driver.set_page_load_timeout(30)
                     driver.set_script_timeout(30)
+                    
+                    # 验证 WebDriver 是否正常工作
+                    driver.execute_script('return navigator.userAgent')
+                    
                     return driver
                 except Exception as e:
                     last_error = e
                     logger.warning(f"创建 WebDriver 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    try:
+                        if 'driver' in locals():
+                            driver.quit()
+                    except:
+                        pass
+                    
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         retry_delay *= 2
