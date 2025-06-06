@@ -4,6 +4,8 @@ discord:
   token: ""
   # 通知消息发送的频道 ID（在 config.local.yaml 中配置）
   channel_id: 0
+  # Discord 服务器 ID（在 config.local.yaml 中配置）
+  guild_id: 0
   # 机器人命令前缀
   command_prefix: "!"
 
