@@ -164,7 +164,7 @@ class Monitor:
         """创建 Chrome WebDriver 实例"""
         temp_dir = None
         try:
-            # 创建临时用户数据目录
+            # 创建临时目录
             temp_dir = tempfile.mkdtemp(prefix='chrome_')
             Monitor._temp_dirs.append(temp_dir)
             
@@ -184,49 +184,54 @@ class Monitor:
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-setuid-sandbox')
             
-            # 用户数据目录配置
-            options.add_argument(f'--user-data-dir={temp_dir}')
-            options.add_argument(f'--disk-cache-dir={os.path.join(temp_dir, "cache")}')
+            # 完全禁用用户数据目录和缓存
+            options.add_argument('--incognito')  # 使用隐身模式
+            options.add_argument('--disable-application-cache')
+            options.add_argument(f'--crash-dumps-dir={temp_dir}')
+            options.add_argument('--disable-sync')
+            options.add_argument('--disable-web-security')
+            options.add_argument('--disable-site-isolation-trials')
+            options.add_argument('--disable-features=IsolateOrigins,site-per-process')
             
             # 内存优化配置
-            options.add_argument('--single-process')  # 使用单进程
-            options.add_argument('--disable-application-cache')  # 禁用应用缓存
-            options.add_argument('--aggressive-cache-discard')  # 积极丢弃缓存
-            options.add_argument('--disable-cache')  # 禁用缓存
-            options.add_argument('--disable-offline-load-stale-cache')  # 禁用离线缓存
-            options.add_argument('--disk-cache-size=0')  # 禁用磁盘缓存
-            options.add_argument('--media-cache-size=0')  # 禁用媒体缓存
-            options.add_argument('--disable-component-extensions-with-background-pages')  # 禁用后台扩展
-            options.add_argument('--disable-default-apps')  # 禁用默认应用
-            options.add_argument('--disable-background-networking')  # 禁用后台网络
-            options.add_argument('--disable-background-timer-throttling')  # 禁用后台计时器限制
-            options.add_argument('--disable-backgrounding-occluded-windows')  # 禁用后台窗口
-            options.add_argument('--disable-breakpad')  # 禁用崩溃报告
-            options.add_argument('--disable-client-side-phishing-detection')  # 禁用钓鱼检测
-            options.add_argument('--disable-component-update')  # 禁用组件更新
-            options.add_argument('--disable-domain-reliability')  # 禁用域名可靠性监控
-            options.add_argument('--disable-features=TranslateUI')  # 禁用翻译
-            options.add_argument('--disable-field-trial-config')  # 禁用实验配置
-            options.add_argument('--disable-fine-grained-time-zone-detection')  # 禁用细粒度时区检测
-            options.add_argument('--disable-hang-monitor')  # 禁用挂起监控
-            options.add_argument('--disable-ipc-flooding-protection')  # 禁用IPC洪水保护
-            options.add_argument('--disable-notifications')  # 禁用通知
-            options.add_argument('--disable-popup-blocking')  # 禁用弹窗拦截
-            options.add_argument('--disable-prompt-on-repost')  # 禁用重新提交提示
-            options.add_argument('--disable-renderer-backgrounding')  # 禁用渲染器后台处理
-            options.add_argument('--disable-sync')  # 禁用同步
-            options.add_argument('--disable-translate')  # 禁用翻译
-            options.add_argument('--disable-windows10-custom-titlebar')  # 禁用Windows 10自定义标题栏
-            options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
-            options.add_argument('--no-first-run')  # 禁用首次运行界面
-            options.add_argument('--no-default-browser-check')  # 禁用默认浏览器检查
-            options.add_argument('--no-experiments')  # 禁用实验
-            options.add_argument('--no-pings')  # 禁用ping
-            options.add_argument('--no-service-autorun')  # 禁用服务自动运行
-            options.add_argument('--no-zygote')  # 禁用zygote进程
-            options.add_argument('--password-store=basic')  # 使用基本密码存储
-            options.add_argument('--use-mock-keychain')  # 使用模拟钥匙串
-            options.add_argument('--window-size=1280,720')  # 使用较小的窗口尺寸
+            options.add_argument('--single-process')
+            options.add_argument('--disable-application-cache')
+            options.add_argument('--aggressive-cache-discard')
+            options.add_argument('--disable-cache')
+            options.add_argument('--disable-offline-load-stale-cache')
+            options.add_argument('--disk-cache-size=0')
+            options.add_argument('--media-cache-size=0')
+            options.add_argument('--disable-component-extensions-with-background-pages')
+            options.add_argument('--disable-default-apps')
+            options.add_argument('--disable-background-networking')
+            options.add_argument('--disable-background-timer-throttling')
+            options.add_argument('--disable-backgrounding-occluded-windows')
+            options.add_argument('--disable-breakpad')
+            options.add_argument('--disable-client-side-phishing-detection')
+            options.add_argument('--disable-component-update')
+            options.add_argument('--disable-domain-reliability')
+            options.add_argument('--disable-features=TranslateUI')
+            options.add_argument('--disable-field-trial-config')
+            options.add_argument('--disable-fine-grained-time-zone-detection')
+            options.add_argument('--disable-hang-monitor')
+            options.add_argument('--disable-ipc-flooding-protection')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--disable-popup-blocking')
+            options.add_argument('--disable-prompt-on-repost')
+            options.add_argument('--disable-renderer-backgrounding')
+            options.add_argument('--disable-sync')
+            options.add_argument('--disable-translate')
+            options.add_argument('--disable-windows10-custom-titlebar')
+            options.add_argument('--ignore-certificate-errors')
+            options.add_argument('--no-first-run')
+            options.add_argument('--no-default-browser-check')
+            options.add_argument('--no-experiments')
+            options.add_argument('--no-pings')
+            options.add_argument('--no-service-autorun')
+            options.add_argument('--no-zygote')
+            options.add_argument('--password-store=basic')
+            options.add_argument('--use-mock-keychain')
+            options.add_argument('--window-size=1280,720')
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
             
             # 设置页面加载策略
@@ -251,9 +256,24 @@ class Monitor:
                 'profile.default_content_setting_values.media_stream_mic': 2,  # 禁用麦克风
                 'profile.default_content_setting_values.media_stream_camera': 2,  # 禁用摄像头
                 'profile.default_content_setting_values.geolocation': 2,  # 禁用地理位置
-                'profile.default_content_setting_values.cookies': 2  # 禁用Cookie
+                'profile.default_content_setting_values.cookies': 2,  # 禁用Cookie
+                'download.default_directory': temp_dir,  # 设置下载目录
+                'download.prompt_for_download': False,  # 禁用下载提示
+                'download.directory_upgrade': True,
+                'safebrowsing.enabled': False  # 禁用安全浏览
             }
             options.add_experimental_option('prefs', prefs)
+            
+            # 禁用开发者工具和自动化提示
+            options.add_experimental_option('excludeSwitches', [
+                'enable-automation',
+                'enable-logging',
+                'enable-blink-features',
+                'ignore-certificate-errors',
+                'safebrowsing-disable-download-protection',
+                'safebrowsing-disable-auto-update',
+                'disable-client-side-phishing-detection'
+            ])
             
             # 创建 WebDriver
             max_retries = 3
