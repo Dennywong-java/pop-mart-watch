@@ -169,7 +169,8 @@ class Monitor:
         try:
             # 创建临时目录
             temp_dir = tempfile.mkdtemp(prefix='chrome_')
-            Monitor._temp_dirs.append(temp_dir)
+            user_data_dir = tempfile.mkdtemp(prefix='chrome_user_')
+            Monitor._temp_dirs.extend([temp_dir, user_data_dir])
             
             # 检查并设置 ChromeDriver 路径
             chromedriver_path = None
@@ -226,11 +227,11 @@ class Monitor:
             options.add_argument('--no-default-browser-check')
             options.add_argument('--password-store=basic')
             options.add_argument('--use-mock-keychain')
-            options.add_argument(f'--user-data-dir=/dev/null')  # 完全禁用用户数据目录
-            options.add_argument('--disk-cache-dir=/dev/null')  # 禁用磁盘缓存
-            options.add_argument('--disk-cache-size=1')  # 最小化磁盘缓存
-            options.add_argument('--media-cache-size=1')  # 最小化媒体缓存
-            options.add_argument('--aggressive-cache-discard')  # 激进的缓存清理
+            options.add_argument(f'--user-data-dir={user_data_dir}')  # 使用临时目录
+            options.add_argument(f'--disk-cache-dir={os.path.join(user_data_dir, "cache")}')
+            options.add_argument('--disk-cache-size=1')
+            options.add_argument('--media-cache-size=1')
+            options.add_argument('--aggressive-cache-discard')
             
             # 性能优化
             options.add_argument('--disable-dev-shm-usage')
@@ -350,12 +351,14 @@ class Monitor:
             logger.error(f"创建 WebDriver 时出错: {str(e)}")
             return None
         finally:
-            if temp_dir and temp_dir in Monitor._temp_dirs:
+            # 清理所有临时目录
+            for dir_path in Monitor._temp_dirs[:]:  # 使用切片创建副本以避免在迭代时修改列表
                 try:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    Monitor._temp_dirs.remove(temp_dir)
-                except:
-                    pass
+                    if os.path.exists(dir_path):
+                        shutil.rmtree(dir_path, ignore_errors=True)
+                    Monitor._temp_dirs.remove(dir_path)
+                except Exception as e:
+                    logger.warning(f"清理临时目录失败 {dir_path}: {str(e)}")
 
     @staticmethod
     async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
