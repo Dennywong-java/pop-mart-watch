@@ -16,23 +16,26 @@ fi
 
 # 创建并设置必要的目录
 echo -e "\n${YELLOW}1. 创建必要的目录...${NC}"
-mkdir -p logs data
-chmod 755 logs data
+mkdir -p logs
+chmod 755 logs
 
 # 初始化数据文件
 echo -e "\n${YELLOW}2. 初始化数据文件...${NC}"
-echo '[]' > data/monitored_items.json
-chmod 644 data/monitored_items.json
+if [ ! -f "monitored_items.json" ]; then
+    echo '[]' > monitored_items.json
+    chmod 644 monitored_items.json
+fi
 
 # 创建并激活虚拟环境
 echo -e "\n${YELLOW}3. 设置Python虚拟环境...${NC}"
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
 fi
-source venv/bin/activate
+source .venv/bin/activate
 
 # 安装依赖
 echo -e "\n${YELLOW}4. 安装Python依赖...${NC}"
+pip install --upgrade pip
 pip install -r requirements.txt
 
 # 配置文件检查
@@ -57,26 +60,25 @@ cd "$SCRIPT_DIR"
 
 # 日志函数
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a logs/monitor.log
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> logs/monitor.log
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
 # 确保日志目录存在
 mkdir -p logs
 chmod 755 logs
 
-# 确保数据目录和文件存在且有正确的权限
-mkdir -p data
-chmod 755 data
-if [ ! -f "data/monitored_items.json" ]; then
-    echo '[]' > data/monitored_items.json
+# 确保数据文件存在且有正确的权限
+if [ ! -f "monitored_items.json" ]; then
+    echo '[]' > monitored_items.json
 fi
-chmod 644 data/monitored_items.json
+chmod 644 monitored_items.json
 
 log "启动监控脚本"
 log "工作目录: $PWD"
 
 # 检查虚拟环境
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     log "错误: 虚拟环境不存在"
     exit 1
 fi
@@ -89,7 +91,7 @@ fi
 
 # 激活虚拟环境
 log "激活虚拟环境"
-source venv/bin/activate
+source .venv/bin/activate
 if [ $? -ne 0 ]; then
     log "错误: 无法激活虚拟环境"
     exit 1
@@ -115,9 +117,9 @@ fi
 
 # 检查数据文件格式
 log "检查数据文件格式..."
-if ! python -m json.tool data/monitored_items.json > /dev/null 2>&1; then
+if ! python -m json.tool monitored_items.json > /dev/null 2>&1; then
     log "警告: 数据文件格式错误，重置为空列表"
-    echo '[]' > data/monitored_items.json
+    echo '[]' > monitored_items.json
 fi
 
 # 运行Python程序
@@ -125,9 +127,14 @@ while true; do
     log "启动 Python 程序..."
     
     # 将Python程序的输出也记录到日志文件
-    python main.py 2>&1 | tee -a logs/app.log
-    EXIT_CODE=${PIPESTATUS[0]}
+    python main.py 2>&1 | while IFS= read -r line; do
+        # 过滤掉不必要的DEBUG日志
+        if [[ ! $line =~ ^.*DEBUG.*$ ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $line" | tee -a logs/app.log
+        fi
+    done
     
+    EXIT_CODE=${PIPESTATUS[0]}
     log "程序退出，退出码: $EXIT_CODE"
     
     # 如果是正常退出（退出码为0），则不重启
@@ -138,7 +145,7 @@ while true; do
     
     # 记录错误信息
     log "程序异常退出，最后100行日志："
-    tail -n 100 logs/app.log >> logs/monitor.log
+    tail -n 100 logs/app.log | grep -v "DEBUG" >> logs/monitor.log
     
     log "5秒后重启..."
     sleep 5
@@ -174,11 +181,11 @@ RestartSec=10
 StandardOutput=append:$PWD/logs/service.log
 StandardError=append:$PWD/logs/service.log
 
-# 内存限制（1GB）
-MemoryLimit=1G
+# 内存限制（512MB）
+MemoryLimit=512M
 
-# CPU限制（最多使用50%CPU）
-CPUQuota=50%
+# CPU限制（最多使用30%CPU）
+CPUQuota=30%
 
 # 自动重启策略
 StartLimitBurst=0
@@ -206,6 +213,7 @@ echo -e "\n${GREEN}部署完成！${NC}"
 echo -e "\n使用以下命令管理服务："
 echo -e "${YELLOW}查看服务状态：${NC}sudo systemctl status popmart-watch"
 echo -e "${YELLOW}查看服务日志：${NC}sudo journalctl -u popmart-watch -f"
-echo -e "${YELLOW}查看程序日志：${NC}tail -f logs/service.log"
+echo -e "${YELLOW}查看程序日志：${NC}tail -f logs/app.log"
+echo -e "${YELLOW}查看监控日志：${NC}tail -f logs/monitor.log"
 echo -e "${YELLOW}重启服务：${NC}sudo systemctl restart popmart-watch"
 echo -e "${YELLOW}停止服务：${NC}sudo systemctl stop popmart-watch" 
