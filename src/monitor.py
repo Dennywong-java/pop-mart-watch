@@ -17,6 +17,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -153,22 +154,56 @@ class Monitor:
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
             options.add_argument('--window-size=1920,1080')
-            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.68 Safari/537.36')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-setuid-sandbox')
+            options.add_argument('--disable-infobars')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--ignore-certificate-errors')
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
             
-            # 为 M1/M2 Mac 特别配置
-            if os.uname().machine == 'arm64':
-                options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            # 设置页面加载策略
+            options.page_load_strategy = 'eager'
             
-            # 让 Selenium Manager 自动处理 ChromeDriver
-            driver = webdriver.Chrome(options=options)
-            return driver
+            # 设置超时时间
+            options.set_capability('pageLoadStrategy', 'eager')
+            options.set_capability('unhandledPromptBehavior', 'accept')
+            
+            # 禁用图片加载以提高速度
+            prefs = {
+                'profile.managed_default_content_settings.images': 2,
+                'disk-cache-size': 4096
+            }
+            options.add_experimental_option('prefs', prefs)
+            
+            # 创建 WebDriver
+            max_retries = 3
+            retry_delay = 2
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    driver = webdriver.Chrome(options=options)
+                    driver.set_page_load_timeout(30)
+                    driver.set_script_timeout(30)
+                    return driver
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"创建 WebDriver 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+            
+            logger.error(f"创建 WebDriver 失败，已达到最大重试次数: {str(last_error)}")
+            return None
+            
         except Exception as e:
-            logger.error(f"创建 WebDriver 失败: {str(e)}")
+            logger.error(f"创建 WebDriver 时出错: {str(e)}")
             return None
 
     @staticmethod
     async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
         """检查商品是否可购买"""
+        driver = None
         try:
             # 正确处理URL编码
             url_parts = url.split('/')
@@ -179,6 +214,7 @@ class Monitor:
             
             driver = Monitor.create_driver()
             if not driver:
+                logger.error("无法创建 WebDriver")
                 return None
             
             try:
@@ -186,24 +222,35 @@ class Monitor:
                 driver.get(fixed_url)
                 
                 # 等待页面加载
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
+                try:
+                    WebDriverWait(driver, 20).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                except TimeoutException:
+                    logger.warning("页面加载超时")
+                    return None
                 
                 # 获取页面标题和URL用于调试
-                title = driver.title
-                current_url = driver.current_url
-                logger.debug(f"页面标题: {title}")
-                logger.debug(f"页面 URL: {current_url}")
+                try:
+                    title = driver.title
+                    current_url = driver.current_url
+                    logger.debug(f"页面标题: {title}")
+                    logger.debug(f"页面 URL: {current_url}")
+                except:
+                    logger.warning("无法获取页面标题或URL")
                 
                 # 如果页面返回400，尝试使用备用域名
-                if "400 Bad Request" in title:
+                if "400 Bad Request" in driver.page_source:
                     alternate_url = fixed_url.replace("popmart.com", "pop-mart.com")
                     logger.debug(f"尝试备用域名: {alternate_url}")
                     driver.get(alternate_url)
-                    WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
-                    )
+                    try:
+                        WebDriverWait(driver, 20).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                    except TimeoutException:
+                        logger.warning("备用域名页面加载超时")
+                        return None
                 
                 # 查找可购买状态相关元素
                 buttons = driver.find_elements(By.XPATH, 
@@ -241,10 +288,19 @@ class Monitor:
                 return None
                 
             finally:
-                driver.quit()
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
                 
         except Exception as e:
             logger.error(f"检查商品可用性时出错: {str(e)}")
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
             return None
 
     @staticmethod

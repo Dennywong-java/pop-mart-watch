@@ -96,17 +96,24 @@ class DiscordBot(commands.Bot):
             async def list_items(interaction: discord.Interaction):
                 """显示所有正在监控的商品"""
                 try:
+                    # 立即发送一个延迟响应
+                    await interaction.response.defer(ephemeral=False)
+                    
+                    # 获取监控列表
                     items = self.monitor.load_monitored_items()
+                    
                     if not items:
-                        await interaction.response.send_message("📝 监控列表为空")
+                        await interaction.followup.send("📝 监控列表为空")
                         return
 
+                    # 创建嵌入消息
                     embed = discord.Embed(
                         title="📋 监控商品列表",
                         color=discord.Color.blue(),
                         timestamp=datetime.utcnow()
                     )
 
+                    # 添加商品信息
                     for item in items:
                         status = "🟢 有库存" if item.get('last_status') else "🔴 售罄"
                         embed.add_field(
@@ -115,10 +122,17 @@ class DiscordBot(commands.Bot):
                             inline=False
                         )
 
-                    await interaction.response.send_message(embed=embed)
+                    # 发送响应
+                    await interaction.followup.send(embed=embed)
+                    
+                except discord.errors.NotFound:
+                    logger.error("交互已过期")
                 except Exception as e:
                     logger.error(f"获取监控列表时出错: {str(e)}")
-                    await interaction.response.send_message("❌ 获取监控列表失败")
+                    try:
+                        await interaction.followup.send("❌ 获取监控列表失败")
+                    except:
+                        pass
 
             # 注册 status 命令
             @self.tree.command(name='status', description='显示机器人状态')
