@@ -435,90 +435,94 @@ class Monitor:
     async def check_item_status(self, url: str) -> Tuple[ProductStatus, Optional[str]]:
         """检查商品状态"""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0'
-            }
+            # 创建 Chrome WebDriver
+            driver = Monitor.create_driver()
+            if not driver:
+                logger.error("无法创建 WebDriver")
+                return ProductStatus.UNKNOWN, None
             
-            async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        logger.warning(f"请求商品页面失败: {url}, 状态码: {response.status}")
-                        return ProductStatus.UNKNOWN, None
+            try:
+                # 设置页面加载超时
+                driver.set_page_load_timeout(30)
+                
+                # 访问商品页面
+                driver.get(url)
+                
+                # 等待页面加载完成
+                WebDriverWait(driver, 30).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # 获取页面内容
+                html = driver.page_source
+                html_lower = html.lower()
+                
+                # 记录页面内容用于调试
+                content_sample = html[:5000] if len(html) > 5000 else html
+                logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
+                
+                # 售罄关键词
+                sold_out_keywords = ['sold out', 'out of stock', 'currently unavailable']
+                for keyword in sold_out_keywords:
+                    if keyword in html_lower:
+                        logger.info(f"找到售罄关键词: {keyword}")
+                        return ProductStatus.SOLD_OUT, None
+                
+                # 即将发售关键词
+                coming_soon_keywords = ['coming soon', 'stay tuned', 'notify me']
+                for keyword in coming_soon_keywords:
+                    if keyword in html_lower:
+                        logger.info(f"找到即将发售关键词: {keyword}")
+                        return ProductStatus.COMING_SOON, None
+                
+                # 可购买关键词
+                in_stock_keywords = ['add to cart', 'buy now', 'add to bag', 'purchase']
+                for keyword in in_stock_keywords:
+                    if keyword in html_lower:
+                        logger.info(f"找到可购买关键词: {keyword}")
+                        # 尝试提取价格
+                        price = None
+                        price_patterns = [
+                            r'price"[^>]*>([^<]+)',
+                            r'price[^>]+>([^<]+)',
+                            r'product-price[^>]+>([^<]+)',
+                            r'\$\s*\d+\.?\d*'
+                        ]
+                        for pattern in price_patterns:
+                            price_match = re.search(pattern, html)
+                            if price_match:
+                                price = price_match.group(1) if len(price_match.groups()) > 0 else price_match.group(0)
+                                price = price.strip()
+                                logger.info(f"找到价格: {price}")
+                                break
+                        return ProductStatus.IN_STOCK, price
+                
+                # 检查是否是404页面
+                if "404" in html or "page not found" in html_lower:
+                    logger.info("页面返回404")
+                    return ProductStatus.OFF_SHELF, None
+                
+                # 如果没有找到任何关键词，记录日志
+                logger.warning(f"未找到任何状态关键词 ({url})")
+                logger.debug("搜索的关键词：")
+                logger.debug(f"售罄关键词: {sold_out_keywords}")
+                logger.debug(f"即将发售关键词: {coming_soon_keywords}")
+                logger.debug(f"可购买关键词: {in_stock_keywords}")
+                
+                return ProductStatus.UNKNOWN, None
+                
+            except TimeoutException:
+                logger.error(f"页面加载超时: {url}")
+                return ProductStatus.UNKNOWN, None
+            except WebDriverException as e:
+                logger.error(f"WebDriver 错误: {str(e)}")
+                return ProductStatus.UNKNOWN, None
+            finally:
+                try:
+                    driver.quit()
+                except:
+                    pass
                     
-                    html = await response.text()
-                    
-                    # 记录响应内容的关键部分用于调试
-                    content_sample = html[:2000] if len(html) > 2000 else html
-                    logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
-                    
-                    # 检查商品状态的关键词（不区分大小写）
-                    html_lower = html.lower()
-                    
-                    # 记录找到的关键词
-                    found_keywords = []
-                    
-                    # 售罄关键词
-                    sold_out_keywords = ['sold out', 'out of stock', 'currently unavailable']
-                    for keyword in sold_out_keywords:
-                        if keyword in html_lower:
-                            found_keywords.append(f"售罄关键词: {keyword}")
-                            logger.debug(f"找到售罄关键词: {keyword}")
-                            return ProductStatus.SOLD_OUT, None
-                    
-                    # 即将发售关键词
-                    coming_soon_keywords = ['coming soon', 'stay tuned', 'notify me']
-                    for keyword in coming_soon_keywords:
-                        if keyword in html_lower:
-                            found_keywords.append(f"即将发售关键词: {keyword}")
-                            logger.debug(f"找到即将发售关键词: {keyword}")
-                            return ProductStatus.COMING_SOON, None
-                    
-                    # 可购买关键词
-                    in_stock_keywords = ['add to cart', 'buy now', 'add to bag', 'purchase']
-                    for keyword in in_stock_keywords:
-                        if keyword in html_lower:
-                            found_keywords.append(f"可购买关键词: {keyword}")
-                            logger.debug(f"找到可购买关键词: {keyword}")
-                            # 尝试提取价格
-                            price = None
-                            price_patterns = [
-                                r'price"[^>]*>([^<]+)',
-                                r'price[^>]+>([^<]+)',
-                                r'product-price[^>]+>([^<]+)',
-                                r'\$\s*\d+\.?\d*'
-                            ]
-                            for pattern in price_patterns:
-                                price_match = re.search(pattern, html)
-                                if price_match:
-                                    price = price_match.group(1) if len(price_match.groups()) > 0 else price_match.group(0)
-                                    price = price.strip()
-                                    logger.debug(f"找到价格: {price}")
-                                    break
-                            return ProductStatus.IN_STOCK, price
-                    
-                    # 检查是否是404页面
-                    if "404" in html or "page not found" in html_lower:
-                        logger.debug("页面返回404")
-                        return ProductStatus.OFF_SHELF, None
-                    
-                    # 如果没有找到任何关键词，记录日志
-                    if not found_keywords:
-                        logger.warning(f"未找到任何状态关键词 ({url})")
-                        logger.debug("搜索的关键词：")
-                        logger.debug(f"售罄关键词: {sold_out_keywords}")
-                        logger.debug(f"即将发售关键词: {coming_soon_keywords}")
-                        logger.debug(f"可购买关键词: {in_stock_keywords}")
-                    
-                    return ProductStatus.UNKNOWN, None
-                        
-        except aiohttp.ClientError as e:
-            logger.error(f"网络请求错误 ({url}): {str(e)}")
-            return ProductStatus.UNKNOWN, None
         except Exception as e:
             logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
             logger.error(f"错误类型: {type(e).__name__}")
