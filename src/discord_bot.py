@@ -232,6 +232,9 @@ class DiscordBot(commands.Bot):
             if self.session:
                 await self.session.close()
             
+            # 清理临时目录
+            self.monitor.cleanup_temp_dirs()
+            
             await super().close()
         except Exception as e:
             logger.error(f"关闭机器人时出错: {str(e)}")

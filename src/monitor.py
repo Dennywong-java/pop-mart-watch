@@ -18,6 +18,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service
 import time
+import tempfile
+import shutil
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,19 @@ class Monitor:
     # 监控项目文件路径
     MONITORED_ITEMS_FILE = 'monitored_items.json'
     
+    # 临时目录列表
+    _temp_dirs = []
+    
+    @classmethod
+    def cleanup_temp_dirs(cls):
+        """清理所有临时目录"""
+        for temp_dir in cls._temp_dirs:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"清理临时目录失败: {str(e)}")
+        cls._temp_dirs.clear()
+
     # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
         'ADD TO BAG',
@@ -146,7 +162,12 @@ class Monitor:
     @staticmethod
     def create_driver():
         """创建 Chrome WebDriver 实例"""
+        temp_dir = None
         try:
+            # 创建临时用户数据目录
+            temp_dir = tempfile.mkdtemp(prefix='chrome_')
+            Monitor._temp_dirs.append(temp_dir)
+            
             # 配置 Chrome 选项
             options = webdriver.ChromeOptions()
             
@@ -162,6 +183,10 @@ class Monitor:
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-setuid-sandbox')
+            
+            # 用户数据目录配置
+            options.add_argument(f'--user-data-dir={temp_dir}')
+            options.add_argument(f'--disk-cache-dir={os.path.join(temp_dir, "cache")}')
             
             # 内存优化配置
             options.add_argument('--single-process')  # 使用单进程
@@ -255,6 +280,13 @@ class Monitor:
         except Exception as e:
             logger.error(f"创建 WebDriver 时出错: {str(e)}")
             return None
+        finally:
+            if temp_dir and temp_dir in Monitor._temp_dirs:
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    Monitor._temp_dirs.remove(temp_dir)
+                except:
+                    pass
 
     @staticmethod
     async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
