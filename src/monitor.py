@@ -156,117 +156,67 @@ class Monitor:
         return True
 
     @staticmethod
-    def create_driver():
-        """创建 Chrome WebDriver 实例"""
-        temp_dir = None
-        max_retries = 3
-        retry_delay = 2  # 秒
-        
-        for attempt in range(max_retries):
+    def create_driver() -> Optional[webdriver.Chrome]:
+        """创建Chrome WebDriver实例"""
+        try:
+            chrome_options = webdriver.ChromeOptions()
+            chrome_options.add_argument('--headless')  # 无界面模式
+            chrome_options.add_argument('--no-sandbox')  # 禁用沙盒
+            chrome_options.add_argument('--disable-dev-shm-usage')  # 禁用/dev/shm使用
+            chrome_options.add_argument('--disable-gpu')  # 禁用GPU加速
+            chrome_options.add_argument('--disable-software-rasterizer')  # 禁用软件光栅化
+            chrome_options.add_argument('--disable-extensions')  # 禁用扩展
+            chrome_options.add_argument('--disable-infobars')  # 禁用信息栏
+            chrome_options.add_argument('--disable-notifications')  # 禁用通知
+            chrome_options.add_argument('--disable-popup-blocking')  # 禁用弹出窗口阻止
+            chrome_options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
+            chrome_options.add_argument('--log-level=3')  # 只显示致命错误
+            chrome_options.add_argument('--silent')  # 静默模式
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')  # 禁用自动化控制检测
+            chrome_options.add_argument('--disable-web-security')  # 禁用网页安全性检查
+            
+            # 添加性能优化选项
+            chrome_options.add_argument('--disable-features=NetworkService')
+            chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+            chrome_options.add_argument('--disable-accelerated-2d-canvas')
+            chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
+            chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
+            chrome_options.add_argument('--disable-accelerated-video-decode')
+            
+            # 设置页面加载策略
+            chrome_options.page_load_strategy = 'eager'  # 等待 DOMContentLoaded 事件
+            
+            # 添加实验性选项
+            chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # 设置窗口大小
+            chrome_options.add_argument('--window-size=1920,1080')
+            
+            # 创建服务对象
+            service = Service()
+            service.start()
+            
+            # 创建WebDriver实例
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # 设置脚本和页面加载超时
+            driver.set_script_timeout(5)
+            driver.set_page_load_timeout(10)
+            
+            # 验证driver是否正常工作
             try:
-                # 创建临时目录
-                temp_dir = tempfile.mkdtemp(prefix='chrome_')
-                user_data_dir = tempfile.mkdtemp(prefix='chrome_user_')
-                Monitor._temp_dirs.extend([temp_dir, user_data_dir])
-                
-                # 检查并设置 ChromeDriver 路径
-                chromedriver_path = None
-                try:
-                    # 首先检查环境变量
-                    chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
-                    
-                    # 如果环境变量未设置，尝试在系统中查找
-                    if not chromedriver_path:
-                        if platform.system() == 'Linux':
-                            # 在 Linux 上尝试常见位置
-                            possible_paths = [
-                                '/usr/local/bin/chromedriver',
-                                '/usr/bin/chromedriver',
-                                '/snap/bin/chromedriver',
-                            ]
-                            for path in possible_paths:
-                                if os.path.exists(path):
-                                    chromedriver_path = path
-                                    break
-                            
-                            # 如果还是找不到，尝试使用 which 命令
-                            if not chromedriver_path:
-                                try:
-                                    chromedriver_path = subprocess.check_output(['which', 'chromedriver']).decode().strip()
-                                except:
-                                    pass
-                except Exception as e:
-                    logger.warning(f"查找 ChromeDriver 路径时出错: {str(e)}")
-                
-                if not chromedriver_path or not os.path.exists(chromedriver_path):
-                    logger.error("未找到 ChromeDriver，请确保它已安装并在系统路径中")
-                    return None
-                
-                # 配置 Chrome 选项
-                options = webdriver.ChromeOptions()
-                
-                # 基本设置
-                options.add_argument('--headless')  # 无界面模式
-                options.add_argument('--no-sandbox')  # 在Linux上需要
-                options.add_argument('--disable-dev-shm-usage')  # 避免内存问题
-                
-                # 性能优化
-                options.add_argument('--disable-gpu')  # 禁用GPU加速
-                options.add_argument('--disable-software-rasterizer')  # 禁用软件光栅化
-                options.add_argument('--disable-extensions')  # 禁用扩展
-                options.add_argument('--disable-infobars')  # 禁用信息栏
-                options.add_argument('--disable-notifications')  # 禁用通知
-                options.add_argument('--disable-popup-blocking')  # 禁用弹窗阻止
-                
-                # 内存优化
-                options.add_argument('--single-process')  # 单进程模式
-                options.add_argument('--disable-application-cache')  # 禁用应用缓存
-                options.add_argument('--media-cache-size=0')  # 禁用媒体缓存
-                options.add_argument('--disk-cache-size=0')  # 禁用磁盘缓存
-                
-                # 网络优化
-                options.add_argument('--disable-background-networking')  # 禁用后台网络
-                options.add_argument('--disable-default-apps')  # 禁用默认应用
-                options.add_argument('--no-first-run')  # 跳过首次运行
-                
-                # 设置用户数据目录
-                options.add_argument(f'--user-data-dir={user_data_dir}')
-                options.add_argument(f'--disk-cache-dir={temp_dir}')
-                
-                # 创建 WebDriver
-                service = Service(chromedriver_path)
-                driver = webdriver.Chrome(service=service, options=options)
-                
-                # 测试连接是否正常
-                try:
-                    driver.get('about:blank')
-                    return driver
-                except Exception as e:
-                    logger.warning(f"WebDriver 连接测试失败: {str(e)}")
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    raise
-                    
+                driver.execute_script('return navigator.userAgent')
             except Exception as e:
-                logger.warning(f"创建 WebDriver 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                # 清理临时目录
-                if temp_dir:
-                    try:
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                    except:
-                        pass
+                logger.error(f"Driver验证失败: {str(e)}")
+                driver.quit()
+                return None
                 
-                # 如果不是最后一次尝试，等待后重试
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    logger.error("创建 WebDriver 失败，已达到最大重试次数")
-                    return None
-        
-        return None
+            return driver
+            
+        except Exception as e:
+            logger.error(f"创建WebDriver时出错: {str(e)}")
+            return None
 
     @staticmethod
     def normalize_domain(url):
@@ -601,63 +551,73 @@ class Monitor:
             
         return ProductStatus.UNKNOWN, None
 
-    async def check_all_items(self) -> list:
-        """检查所有商品的状态"""
+    async def check_all_items(self) -> List[Notification]:
+        """检查所有商品状态"""
         notifications = []
-        current_time = datetime.now().isoformat()
+        items_to_check = list(self.monitored_items.items())
         
-        # 创建字典的副本进行遍历
-        items_to_check = dict(self.monitored_items)
+        # 创建信号量来限制并发数量
+        semaphore = asyncio.Semaphore(3)  # 最多同时运行3个检查任务
         
-        for url, item in items_to_check.items():
-            # 获取当前状态
-            current_status, price = await self.check_item_status(url)
-            previous_status = item.get('last_status', ProductStatus.UNKNOWN.value)
+        async def check_with_semaphore(url: str, previous_status: ProductStatus) -> Optional[Tuple[str, ProductStatus, Optional[str]]]:
+            async with semaphore:
+                try:
+                    current_status, price = await self.check_item_status(url)
+                    return url, current_status, price
+                except Exception as e:
+                    logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
+                    return None
+        
+        # 创建所有检查任务
+        tasks = []
+        for url, previous_status in items_to_check:
+            task = asyncio.create_task(check_with_semaphore(url, previous_status))
+            tasks.append(task)
+        
+        # 等待所有任务完成，但设置总体超时
+        try:
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=60)
             
-            # 记录检查结果
-            logger.info(f"商品状态检查 - {item['name']} ({url}):")
-            logger.info(f"  当前状态: {current_status.value}")
-            logger.info(f"  之前状态: {previous_status}")
-            if price:
-                logger.info(f"  价格: {price}")
-            
-            # 状态发生变化时才发送通知
-            if current_status.value != previous_status:
-                logger.info(f"  状态变化: {previous_status} -> {current_status.value}")
-                
-                # 更新原始字典中的商品信息
-                if url in self.monitored_items:  # 确保URL仍然存在
-                    self.monitored_items[url].update({
-                        'last_status': current_status.value,
-                        'last_check': current_time,
-                        'last_notification': current_time,
-                        'price': price
-                    })
-                
-                    # 生成通知消息
-                    status_messages = {
-                        ProductStatus.IN_STOCK.value: f"🟢 商品已上架！{f'价格: {price}' if price else ''}",
-                        ProductStatus.SOLD_OUT.value: "🔴 商品已售罄",
-                        ProductStatus.COMING_SOON.value: "🟡 商品即将发售",
-                        ProductStatus.OFF_SHELF.value: "⚫ 商品已下架",
-                        ProductStatus.UNKNOWN.value: "❓ 商品状态未知"
-                    }
+            for result in results:
+                if result is None or isinstance(result, Exception):
+                    continue
                     
-                    notification = {
-                        'url': url,
-                        'name': item['name'],
-                        'status': current_status.value,
-                        'message': status_messages.get(current_status.value, "状态未知"),
-                        'price': price,
-                        'icon_url': item.get('icon_url')
-                    }
+                url, current_status, price = result
+                previous_status = self.monitored_items.get(url)
+                
+                # 记录检查结果
+                logger.info(f"商品状态检查 - {url.split('/')[-1]} ({url}):")
+                logger.info(f"  当前状态: {current_status.name.lower()}")
+                logger.info(f"  之前状态: {previous_status.name.lower()}")
+                
+                # 如果状态发生变化，创建通知
+                if current_status != previous_status and current_status != ProductStatus.UNKNOWN:
+                    notification = Notification(
+                        url=url,
+                        old_status=previous_status,
+                        new_status=current_status,
+                        price=price
+                    )
                     notifications.append(notification)
-            else:
-                # 仅更新检查时间
-                if url in self.monitored_items:  # 确保URL仍然存在
-                    self.monitored_items[url]['last_check'] = current_time
-        
-        # 保存更新后的数据
-        self._save_monitored_items()
-        
+                    
+                    # 更新状态
+                    self.monitored_items[url] = current_status
+                    
+                # 如果连续返回unknown状态，记录警告
+                elif current_status == ProductStatus.UNKNOWN:
+                    if url in self.unknown_count:
+                        self.unknown_count[url] += 1
+                        if self.unknown_count[url] >= 3:  # 连续3次unknown
+                            logger.warning(f"商品 {url} 连续 {self.unknown_count[url]} 次返回unknown状态")
+                    else:
+                        self.unknown_count[url] = 1
+                else:
+                    # 重置unknown计数
+                    self.unknown_count.pop(url, None)
+                    
+        except asyncio.TimeoutError:
+            logger.error("检查所有商品状态超时")
+        except Exception as e:
+            logger.error(f"检查商品状态时出错: {str(e)}")
+            
         return notifications 
