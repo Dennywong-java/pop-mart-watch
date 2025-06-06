@@ -442,7 +442,7 @@ class Monitor:
             return False
 
     @staticmethod
-    def check_network(url):
+    async def check_network(url):
         """检查网络连接"""
         try:
             # 检查 DNS 解析
@@ -562,9 +562,13 @@ class Monitor:
                 return {}
 
             # 检查网络连接
-            if not await self.check_network(url):
+            is_available, new_url = await self.check_network(url)
+            if not is_available:
                 logger.warning(f"无法连接到服务器: {url}")
                 return product_info
+
+            # 更新 URL
+            url = new_url
 
             # 创建或使用现有的会话
             should_close_session = False
