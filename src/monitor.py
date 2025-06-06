@@ -456,9 +456,23 @@ class Monitor:
                 driver.get(url)
                 
                 # 等待页面加载完成
-                WebDriverWait(driver, 30).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
+                try:
+                    # 等待 body 元素出现
+                    WebDriverWait(driver, 30).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    
+                    # 等待页面加载状态为 complete
+                    WebDriverWait(driver, 30).until(
+                        lambda d: d.execute_script("return document.readyState") == "complete"
+                    )
+                    
+                    # 额外等待一段时间确保动态内容加载完成
+                    await asyncio.sleep(2)
+                    
+                except TimeoutException:
+                    logger.error("等待页面加载超时")
+                    return ProductStatus.UNKNOWN, None
                 
                 # 获取页面内容
                 html = driver.page_source
@@ -471,6 +485,33 @@ class Monitor:
                 # 记录找到的关键词
                 found_keywords = []
                 
+                # 检查是否是404页面
+                not_found_indicators = [
+                    "404",
+                    "page not found",
+                    "找不到页面",
+                    "页面不存在",
+                    "product is not available",
+                    "product not found"
+                ]
+                
+                is_404 = False
+                for indicator in not_found_indicators:
+                    if indicator in html_lower:
+                        # 进一步验证是否真的是 404
+                        try:
+                            # 检查是否存在 404 特定的元素或内容
+                            error_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '404') or contains(@class, '404') or contains(@id, '404')]")
+                            if error_elements:
+                                is_404 = True
+                                logger.info(f"确认页面返回404 - 找到404元素: {[elem.get_attribute('outerHTML') for elem in error_elements]}")
+                                break
+                        except Exception as e:
+                            logger.warning(f"检查404元素时出错: {str(e)}")
+                
+                if is_404:
+                    return ProductStatus.OFF_SHELF, None
+                
                 # 售罄关键词
                 for keyword in Monitor.SOLD_OUT_KEYWORDS:
                     if keyword.lower() in html_lower:
@@ -479,7 +520,6 @@ class Monitor:
                         return ProductStatus.SOLD_OUT, None
                 
                 # 即将发售关键词
-                coming_soon_keywords = ['coming soon', 'stay tuned', 'notify me']
                 for keyword in Monitor.COMING_SOON_KEYWORDS:
                     if keyword.lower() in html_lower:
                         found_keywords.append(f"即将发售关键词: {keyword}")
@@ -493,25 +533,39 @@ class Monitor:
                         logger.debug(f"找到可购买关键词: {keyword}")
                         # 尝试提取价格
                         price = None
-                        price_patterns = [
-                            r'price"[^>]*>([^<]+)',
-                            r'price[^>]+>([^<]+)',
-                            r'product-price[^>]+>([^<]+)',
-                            r'\$\s*\d+\.?\d*'
-                        ]
-                        for pattern in price_patterns:
-                            price_match = re.search(pattern, html)
-                            if price_match:
-                                price = price_match.group(1) if len(price_match.groups()) > 0 else price_match.group(0)
-                                price = price.strip()
-                                logger.debug(f"找到价格: {price}")
-                                break
+                        try:
+                            # 首先尝试通过 XPath 定位价格元素
+                            price_elements = driver.find_elements(By.XPATH, 
+                                "//*[contains(@class, 'price') or contains(@id, 'price')]//text() | " +
+                                "//*[contains(text(), '$')]"
+                            )
+                            if price_elements:
+                                for elem in price_elements:
+                                    price_text = elem.text
+                                    if '$' in price_text:
+                                        price = price_text.strip()
+                                        logger.debug(f"通过元素找到价格: {price}")
+                                        break
+                            
+                            # 如果通过元素没找到，使用正则表达式
+                            if not price:
+                                price_patterns = [
+                                    r'price"[^>]*>([^<]+)',
+                                    r'price[^>]+>([^<]+)',
+                                    r'product-price[^>]+>([^<]+)',
+                                    r'\$\s*\d+\.?\d*'
+                                ]
+                                for pattern in price_patterns:
+                                    price_match = re.search(pattern, html)
+                                    if price_match:
+                                        price = price_match.group(1) if len(price_match.groups()) > 0 else price_match.group(0)
+                                        price = price.strip()
+                                        logger.debug(f"通过正则找到价格: {price}")
+                                        break
+                        except Exception as e:
+                            logger.warning(f"提取价格时出错: {str(e)}")
+                            
                         return ProductStatus.IN_STOCK, price
-                
-                # 检查是否是404页面
-                if "404" in html or "page not found" in html_lower:
-                    logger.info("页面返回404")
-                    return ProductStatus.OFF_SHELF, None
                 
                 # 如果没有找到任何关键词，记录日志
                 if not found_keywords:
@@ -520,6 +574,16 @@ class Monitor:
                     logger.debug(f"售罄关键词: {Monitor.SOLD_OUT_KEYWORDS}")
                     logger.debug(f"即将发售关键词: {Monitor.COMING_SOON_KEYWORDS}")
                     logger.debug(f"可购买关键词: {Monitor.AVAILABLE_KEYWORDS}")
+                    
+                    # 记录当前页面的主要元素
+                    try:
+                        main_elements = driver.find_elements(By.XPATH, "//main//* | //article//* | //*[contains(@class, 'product')]")
+                        if main_elements:
+                            logger.debug("页面主要元素:")
+                            for elem in main_elements[:10]:  # 只记录前10个元素
+                                logger.debug(f"元素: {elem.get_attribute('outerHTML')}")
+                    except Exception as e:
+                        logger.warning(f"获取页面元素时出错: {str(e)}")
                 
                 return ProductStatus.UNKNOWN, None
                 
