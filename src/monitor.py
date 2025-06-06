@@ -83,6 +83,13 @@ class Monitor:
         'Item unavailable'
     ]
     
+    # 即将发售关键词
+    COMING_SOON_KEYWORDS = [
+        'coming soon',
+        'stay tuned',
+        'notify me'
+    ]
+    
     # 临时目录列表
     _temp_dirs = []
     
@@ -461,25 +468,29 @@ class Monitor:
                 content_sample = html[:5000] if len(html) > 5000 else html
                 logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
                 
+                # 记录找到的关键词
+                found_keywords = []
+                
                 # 售罄关键词
-                sold_out_keywords = ['sold out', 'out of stock', 'currently unavailable']
-                for keyword in sold_out_keywords:
-                    if keyword in html_lower:
-                        logger.info(f"找到售罄关键词: {keyword}")
+                for keyword in Monitor.SOLD_OUT_KEYWORDS:
+                    if keyword.lower() in html_lower:
+                        found_keywords.append(f"售罄关键词: {keyword}")
+                        logger.debug(f"找到售罄关键词: {keyword}")
                         return ProductStatus.SOLD_OUT, None
                 
                 # 即将发售关键词
                 coming_soon_keywords = ['coming soon', 'stay tuned', 'notify me']
-                for keyword in coming_soon_keywords:
-                    if keyword in html_lower:
-                        logger.info(f"找到即将发售关键词: {keyword}")
+                for keyword in Monitor.COMING_SOON_KEYWORDS:
+                    if keyword.lower() in html_lower:
+                        found_keywords.append(f"即将发售关键词: {keyword}")
+                        logger.debug(f"找到即将发售关键词: {keyword}")
                         return ProductStatus.COMING_SOON, None
                 
                 # 可购买关键词
-                in_stock_keywords = ['add to cart', 'buy now', 'add to bag', 'purchase']
-                for keyword in in_stock_keywords:
-                    if keyword in html_lower:
-                        logger.info(f"找到可购买关键词: {keyword}")
+                for keyword in Monitor.AVAILABLE_KEYWORDS:
+                    if keyword.lower() in html_lower:
+                        found_keywords.append(f"可购买关键词: {keyword}")
+                        logger.debug(f"找到可购买关键词: {keyword}")
                         # 尝试提取价格
                         price = None
                         price_patterns = [
@@ -493,7 +504,7 @@ class Monitor:
                             if price_match:
                                 price = price_match.group(1) if len(price_match.groups()) > 0 else price_match.group(0)
                                 price = price.strip()
-                                logger.info(f"找到价格: {price}")
+                                logger.debug(f"找到价格: {price}")
                                 break
                         return ProductStatus.IN_STOCK, price
                 
@@ -503,11 +514,12 @@ class Monitor:
                     return ProductStatus.OFF_SHELF, None
                 
                 # 如果没有找到任何关键词，记录日志
-                logger.warning(f"未找到任何状态关键词 ({url})")
-                logger.debug("搜索的关键词：")
-                logger.debug(f"售罄关键词: {sold_out_keywords}")
-                logger.debug(f"即将发售关键词: {coming_soon_keywords}")
-                logger.debug(f"可购买关键词: {in_stock_keywords}")
+                if not found_keywords:
+                    logger.warning(f"未找到任何状态关键词 ({url})")
+                    logger.debug("搜索的关键词：")
+                    logger.debug(f"售罄关键词: {Monitor.SOLD_OUT_KEYWORDS}")
+                    logger.debug(f"即将发售关键词: {Monitor.COMING_SOON_KEYWORDS}")
+                    logger.debug(f"可购买关键词: {Monitor.AVAILABLE_KEYWORDS}")
                 
                 return ProductStatus.UNKNOWN, None
                 
