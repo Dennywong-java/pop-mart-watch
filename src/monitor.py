@@ -155,16 +155,53 @@ class Monitor:
             if os.path.exists(chrome_binary):
                 options.binary_location = chrome_binary
             
+            # 基本配置
             options.add_argument('--headless=new')  # 使用新的无头模式
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
-            options.add_argument('--window-size=1920,1080')
             options.add_argument('--disable-extensions')
             options.add_argument('--disable-setuid-sandbox')
-            options.add_argument('--disable-infobars')
-            options.add_argument('--disable-notifications')
-            options.add_argument('--ignore-certificate-errors')
+            
+            # 内存优化配置
+            options.add_argument('--single-process')  # 使用单进程
+            options.add_argument('--disable-application-cache')  # 禁用应用缓存
+            options.add_argument('--aggressive-cache-discard')  # 积极丢弃缓存
+            options.add_argument('--disable-cache')  # 禁用缓存
+            options.add_argument('--disable-offline-load-stale-cache')  # 禁用离线缓存
+            options.add_argument('--disk-cache-size=0')  # 禁用磁盘缓存
+            options.add_argument('--media-cache-size=0')  # 禁用媒体缓存
+            options.add_argument('--disable-component-extensions-with-background-pages')  # 禁用后台扩展
+            options.add_argument('--disable-default-apps')  # 禁用默认应用
+            options.add_argument('--disable-background-networking')  # 禁用后台网络
+            options.add_argument('--disable-background-timer-throttling')  # 禁用后台计时器限制
+            options.add_argument('--disable-backgrounding-occluded-windows')  # 禁用后台窗口
+            options.add_argument('--disable-breakpad')  # 禁用崩溃报告
+            options.add_argument('--disable-client-side-phishing-detection')  # 禁用钓鱼检测
+            options.add_argument('--disable-component-update')  # 禁用组件更新
+            options.add_argument('--disable-domain-reliability')  # 禁用域名可靠性监控
+            options.add_argument('--disable-features=TranslateUI')  # 禁用翻译
+            options.add_argument('--disable-field-trial-config')  # 禁用实验配置
+            options.add_argument('--disable-fine-grained-time-zone-detection')  # 禁用细粒度时区检测
+            options.add_argument('--disable-hang-monitor')  # 禁用挂起监控
+            options.add_argument('--disable-ipc-flooding-protection')  # 禁用IPC洪水保护
+            options.add_argument('--disable-notifications')  # 禁用通知
+            options.add_argument('--disable-popup-blocking')  # 禁用弹窗拦截
+            options.add_argument('--disable-prompt-on-repost')  # 禁用重新提交提示
+            options.add_argument('--disable-renderer-backgrounding')  # 禁用渲染器后台处理
+            options.add_argument('--disable-sync')  # 禁用同步
+            options.add_argument('--disable-translate')  # 禁用翻译
+            options.add_argument('--disable-windows10-custom-titlebar')  # 禁用Windows 10自定义标题栏
+            options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
+            options.add_argument('--no-first-run')  # 禁用首次运行界面
+            options.add_argument('--no-default-browser-check')  # 禁用默认浏览器检查
+            options.add_argument('--no-experiments')  # 禁用实验
+            options.add_argument('--no-pings')  # 禁用ping
+            options.add_argument('--no-service-autorun')  # 禁用服务自动运行
+            options.add_argument('--no-zygote')  # 禁用zygote进程
+            options.add_argument('--password-store=basic')  # 使用基本密码存储
+            options.add_argument('--use-mock-keychain')  # 使用模拟钥匙串
+            options.add_argument('--window-size=1280,720')  # 使用较小的窗口尺寸
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
             
             # 设置页面加载策略
@@ -174,10 +211,22 @@ class Monitor:
             options.set_capability('pageLoadStrategy', 'eager')
             options.set_capability('unhandledPromptBehavior', 'accept')
             
-            # 禁用图片加载以提高速度
+            # 禁用图片和其他媒体加载
             prefs = {
-                'profile.managed_default_content_settings.images': 2,
-                'disk-cache-size': 4096
+                'profile.managed_default_content_settings.images': 2,  # 禁用图片
+                'profile.managed_default_content_settings.media_stream': 2,  # 禁用媒体流
+                'profile.managed_default_content_settings.plugins': 2,  # 禁用插件
+                'profile.default_content_settings.popups': 2,  # 禁用弹窗
+                'profile.managed_default_content_settings.notifications': 2,  # 禁用通知
+                'profile.managed_default_content_settings.automatic_downloads': 2,  # 禁用自动下载
+                'profile.managed_default_content_settings.cookies': 2,  # 禁用Cookie
+                'profile.managed_default_content_settings.javascript': 1,  # 启用JavaScript
+                'profile.managed_default_content_settings.geolocation': 2,  # 禁用地理位置
+                'profile.default_content_setting_values.notifications': 2,  # 禁用通知
+                'profile.default_content_setting_values.media_stream_mic': 2,  # 禁用麦克风
+                'profile.default_content_setting_values.media_stream_camera': 2,  # 禁用摄像头
+                'profile.default_content_setting_values.geolocation': 2,  # 禁用地理位置
+                'profile.default_content_setting_values.cookies': 2  # 禁用Cookie
             }
             options.add_experimental_option('prefs', prefs)
             

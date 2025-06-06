@@ -1,0 +1,30 @@
+[Unit]
+Description=POP MART Watch Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/pop-mart-watch
+Environment=PYTHONUNBUFFERED=1
+Environment=CHROME_BINARY=/usr/bin/google-chrome
+
+# 资源限制
+MemoryLimit=512M
+MemorySwapMax=0
+CPUQuota=30%
+TasksMax=50
+LimitNOFILE=1024
+
+# 重启策略
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# 执行命令
+ExecStart=/home/ec2-user/pop-mart-watch/.venv/bin/python main.py
+
+[Install]
+WantedBy=multi-user.target 
