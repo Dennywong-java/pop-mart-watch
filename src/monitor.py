@@ -30,6 +30,7 @@ from enum import Enum
 from datetime import datetime
 import traceback
 from dataclasses import dataclass
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,13 @@ class Monitor:
     负责检查商品页面的可用性状态
     """
     
-    def __init__(self):
+    def __init__(self, config):
         """初始化监控器"""
+        self.config = config
         self.monitored_items = {}
+        self.unknown_count = {}
+        self._cleanup_counter = 0
+        self._max_cleanup_interval = 10  # 每10次检查进行一次清理
         self.data_dir = "data"
         self.data_file = os.path.join(self.data_dir, "monitored_items.json")
         self._load_monitored_items()
@@ -169,38 +174,45 @@ class Monitor:
         """创建Chrome WebDriver实例"""
         try:
             chrome_options = webdriver.ChromeOptions()
+            
+            # 基本设置
             chrome_options.add_argument('--headless')  # 无界面模式
             chrome_options.add_argument('--no-sandbox')  # 禁用沙盒
             chrome_options.add_argument('--disable-dev-shm-usage')  # 禁用/dev/shm使用
+            
+            # 内存优化设置
             chrome_options.add_argument('--disable-gpu')  # 禁用GPU加速
             chrome_options.add_argument('--disable-software-rasterizer')  # 禁用软件光栅化
             chrome_options.add_argument('--disable-extensions')  # 禁用扩展
+            chrome_options.add_argument('--single-process')  # 单进程模式
+            chrome_options.add_argument('--disable-application-cache')  # 禁用应用缓存
             chrome_options.add_argument('--disable-infobars')  # 禁用信息栏
             chrome_options.add_argument('--disable-notifications')  # 禁用通知
             chrome_options.add_argument('--disable-popup-blocking')  # 禁用弹出窗口阻止
-            chrome_options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
-            chrome_options.add_argument('--log-level=3')  # 只显示致命错误
-            chrome_options.add_argument('--silent')  # 静默模式
-            chrome_options.add_argument('--disable-blink-features=AutomationControlled')  # 禁用自动化控制检测
-            chrome_options.add_argument('--disable-web-security')  # 禁用网页安全性检查
             
-            # 添加性能优化选项
-            chrome_options.add_argument('--disable-features=NetworkService')
-            chrome_options.add_argument('--disable-features=VizDisplayCompositor')
-            chrome_options.add_argument('--disable-accelerated-2d-canvas')
-            chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
-            chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
-            chrome_options.add_argument('--disable-accelerated-video-decode')
+            # 内存限制
+            chrome_options.add_argument('--js-flags=--max-old-space-size=128')  # 限制JS内存
+            chrome_options.add_argument('--memory-pressure-off')  # 禁用内存压力检测
+            chrome_options.add_argument('--disable-renderer-backgrounding')  # 禁用渲染器后台处理
+            chrome_options.add_argument('--disable-backgrounding-occluded-windows')  # 禁用遮挡窗口后台处理
             
-            # 设置页面加载策略
+            # 缓存设置
+            chrome_options.add_argument('--media-cache-size=0')  # 禁用媒体缓存
+            chrome_options.add_argument('--disk-cache-size=0')  # 禁用磁盘缓存
+            chrome_options.add_argument('--aggressive-cache-discard')  # 激进的缓存丢弃
+            chrome_options.add_argument('--disable-cache')  # 禁用缓存
+            
+            # 网络优化
+            chrome_options.add_argument('--disable-background-networking')  # 禁用后台网络
+            chrome_options.add_argument('--disable-default-apps')  # 禁用默认应用
+            chrome_options.add_argument('--no-first-run')  # 跳过首次运行
+            
+            # 页面加载策略
             chrome_options.page_load_strategy = 'eager'  # 等待 DOMContentLoaded 事件
             
-            # 添加实验性选项
+            # 实验性选项
             chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            
-            # 设置窗口大小
-            chrome_options.add_argument('--window-size=1920,1080')
             
             # 创建服务对象
             service = Service()
@@ -209,7 +221,7 @@ class Monitor:
             # 创建WebDriver实例
             driver = webdriver.Chrome(service=service, options=chrome_options)
             
-            # 设置脚本和页面加载超时
+            # 设置超时
             driver.set_script_timeout(5)
             driver.set_page_load_timeout(10)
             
@@ -560,73 +572,116 @@ class Monitor:
             
         return ProductStatus.UNKNOWN, None
 
+    async def cleanup(self):
+        """清理资源"""
+        try:
+            # 强制进行垃圾回收
+            import gc
+            gc.collect()
+            
+            # 清理过期的unknown计数
+            current_urls = set(self.monitored_items.keys())
+            expired_urls = [url for url in self.unknown_count.keys() if url not in current_urls]
+            for url in expired_urls:
+                self.unknown_count.pop(url, None)
+            
+            # 记录内存使用情况
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            logger.info(f"内存使用情况 - RSS: {memory_info.rss / 1024 / 1024:.2f}MB, VMS: {memory_info.vms / 1024 / 1024:.2f}MB")
+            
+        except Exception as e:
+            logger.error(f"清理资源时出错: {str(e)}")
+            
     async def check_all_items(self) -> List[Notification]:
         """检查所有商品状态"""
-        notifications = []
-        items_to_check = list(self.monitored_items.items())
-        
-        # 创建信号量来限制并发数量
-        semaphore = asyncio.Semaphore(3)  # 最多同时运行3个检查任务
-        
-        async def check_with_semaphore(url: str, previous_status: ProductStatus) -> Optional[Tuple[str, ProductStatus, Optional[str]]]:
-            async with semaphore:
-                try:
-                    current_status, price = await self.check_item_status(url)
-                    return url, current_status, price
-                except Exception as e:
-                    logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
-                    return None
-        
-        # 创建所有检查任务
-        tasks = []
-        for url, previous_status in items_to_check:
-            task = asyncio.create_task(check_with_semaphore(url, previous_status))
-            tasks.append(task)
-        
-        # 等待所有任务完成，但设置总体超时
         try:
-            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=60)
+            # 检查是否需要进行清理
+            self._cleanup_counter += 1
+            if self._cleanup_counter >= self._max_cleanup_interval:
+                await self.cleanup()
+                self._cleanup_counter = 0
             
-            for result in results:
-                if result is None or isinstance(result, Exception):
-                    continue
-                    
-                url, current_status, price = result
-                previous_status = self.monitored_items.get(url)
+            notifications = []
+            items_to_check = list(self.monitored_items.items())
+            
+            # 创建信号量来限制并发数量
+            semaphore = asyncio.Semaphore(2)  # 减少到2个并发任务
+            
+            # 分批处理商品
+            batch_size = 5  # 每批处理5个商品
+            for i in range(0, len(items_to_check), batch_size):
+                batch = items_to_check[i:i + batch_size]
                 
-                # 记录检查结果
-                logger.info(f"商品状态检查 - {url.split('/')[-1]} ({url}):")
-                logger.info(f"  当前状态: {current_status.name.lower()}")
-                logger.info(f"  之前状态: {previous_status.name.lower()}")
+                async def check_with_semaphore(url: str, previous_status: ProductStatus) -> Optional[Tuple[str, ProductStatus, Optional[str]]]:
+                    async with semaphore:
+                        try:
+                            current_status, price = await self.check_item_status(url)
+                            return url, current_status, price
+                        except Exception as e:
+                            logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
+                            return None
+                        finally:
+                            # 强制进行垃圾回收
+                            import gc
+                            gc.collect()
                 
-                # 如果状态发生变化，创建通知
-                if current_status != previous_status and current_status != ProductStatus.UNKNOWN:
-                    notification = Notification(
-                        url=url,
-                        old_status=previous_status,
-                        new_status=current_status,
-                        price=price
-                    )
-                    notifications.append(notification)
+                # 创建当前批次的任务
+                tasks = []
+                for url, previous_status in batch:
+                    task = asyncio.create_task(check_with_semaphore(url, previous_status))
+                    tasks.append(task)
+                
+                # 等待当前批次完成，设置超时
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=30)
                     
-                    # 更新状态
-                    self.monitored_items[url] = current_status
+                    for result in results:
+                        if result is None or isinstance(result, Exception):
+                            continue
+                            
+                        url, current_status, price = result
+                        previous_status = self.monitored_items.get(url)
+                        
+                        # 记录检查结果
+                        logger.info(f"商品状态检查 - {url.split('/')[-1]} ({url}):")
+                        logger.info(f"  当前状态: {current_status.name.lower()}")
+                        logger.info(f"  之前状态: {previous_status.name.lower()}")
+                        
+                        # 如果状态发生变化，创建通知
+                        if current_status != previous_status and current_status != ProductStatus.UNKNOWN:
+                            notification = Notification(
+                                url=url,
+                                old_status=previous_status,
+                                new_status=current_status,
+                                price=price
+                            )
+                            notifications.append(notification)
+                            
+                            # 更新状态
+                            self.monitored_items[url] = current_status
+                            
+                        # 如果连续返回unknown状态，记录警告
+                        elif current_status == ProductStatus.UNKNOWN:
+                            if url in self.unknown_count:
+                                self.unknown_count[url] += 1
+                                if self.unknown_count[url] >= 3:  # 连续3次unknown
+                                    logger.warning(f"商品 {url} 连续 {self.unknown_count[url]} 次返回unknown状态")
+                            else:
+                                self.unknown_count[url] = 1
+                        else:
+                            # 重置unknown计数
+                            self.unknown_count.pop(url, None)
                     
-                # 如果连续返回unknown状态，记录警告
-                elif current_status == ProductStatus.UNKNOWN:
-                    if url in self.unknown_count:
-                        self.unknown_count[url] += 1
-                        if self.unknown_count[url] >= 3:  # 连续3次unknown
-                            logger.warning(f"商品 {url} 连续 {self.unknown_count[url]} 次返回unknown状态")
-                    else:
-                        self.unknown_count[url] = 1
-                else:
-                    # 重置unknown计数
-                    self.unknown_count.pop(url, None)
-                    
-        except asyncio.TimeoutError:
-            logger.error("检查所有商品状态超时")
+                except asyncio.TimeoutError:
+                    logger.error("检查商品状态超时")
+                except Exception as e:
+                    logger.error(f"检查商品状态时出错: {str(e)}")
+                
+                # 批次间等待一小段时间，让系统有机会释放资源
+                await asyncio.sleep(2)
+            
+            return notifications 
         except Exception as e:
             logger.error(f"检查商品状态时出错: {str(e)}")
-            
-        return notifications 
+            return [] 
