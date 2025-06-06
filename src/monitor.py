@@ -21,6 +21,9 @@ import time
 import tempfile
 import shutil
 import uuid
+import platform
+import subprocess
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +171,39 @@ class Monitor:
             temp_dir = tempfile.mkdtemp(prefix='chrome_')
             Monitor._temp_dirs.append(temp_dir)
             
+            # 检查并设置 ChromeDriver 路径
+            chromedriver_path = None
+            try:
+                # 首先检查环境变量
+                chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+                
+                # 如果环境变量未设置，尝试在系统中查找
+                if not chromedriver_path:
+                    if platform.system() == 'Linux':
+                        # 在 Linux 上尝试常见位置
+                        possible_paths = [
+                            '/usr/local/bin/chromedriver',
+                            '/usr/bin/chromedriver',
+                            '/snap/bin/chromedriver',
+                        ]
+                        for path in possible_paths:
+                            if os.path.exists(path):
+                                chromedriver_path = path
+                                break
+                        
+                        # 如果还是找不到，尝试使用 which 命令
+                        if not chromedriver_path:
+                            try:
+                                chromedriver_path = subprocess.check_output(['which', 'chromedriver']).decode().strip()
+                            except:
+                                pass
+            except Exception as e:
+                logger.warning(f"查找 ChromeDriver 路径时出错: {str(e)}")
+            
+            if not chromedriver_path or not os.path.exists(chromedriver_path):
+                logger.error("未找到 ChromeDriver，请确保它已安装并在系统路径中")
+                return None
+            
             # 配置 Chrome 选项
             options = webdriver.ChromeOptions()
             
@@ -280,8 +316,11 @@ class Monitor:
                     except:
                         pass
                     
-                    service = Service()
-                    service.creation_flags = 0x08000000  # 禁用窗口
+                    service = Service(executable_path=chromedriver_path)
+                    
+                    # 只在 Windows 平台设置 creation_flags
+                    if platform.system() == 'Windows':
+                        service.creation_flags = 0x08000000  # 禁用窗口
                     
                     driver = webdriver.Chrome(service=service, options=options)
                     driver.set_page_load_timeout(30)
