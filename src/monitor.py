@@ -4,7 +4,7 @@
 import os
 import logging
 import asyncio
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 import aiohttp
 from bs4 import BeautifulSoup
 from src.config import config
@@ -26,8 +26,18 @@ import subprocess
 from pathlib import Path
 import socket
 import dns.resolver
+from enum import Enum
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+class ProductStatus(Enum):
+    """商品状态枚举"""
+    UNKNOWN = "unknown"          # 未知状态（比如请求失败）
+    IN_STOCK = "in_stock"        # 有货
+    SOLD_OUT = "sold_out"        # 售罄
+    COMING_SOON = "coming_soon"  # 即将发售
+    OFF_SHELF = "off_shelf"      # 下架
 
 class Monitor:
     """
@@ -38,7 +48,9 @@ class Monitor:
     def __init__(self):
         """初始化监控器"""
         self.monitored_items = {}
-        self.load_monitored_items()
+        self.data_dir = "data"
+        self.data_file = os.path.join(self.data_dir, "monitored_items.json")
+        self._load_monitored_items()
     
     # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
@@ -83,110 +95,72 @@ class Monitor:
                 logger.warning(f"清理临时目录失败: {str(e)}")
         cls._temp_dirs.clear()
 
-    def load_monitored_items(self) -> None:
-        """从文件加载监控商品列表"""
-        try:
-            # 确保数据目录存在
-            os.makedirs(os.path.dirname(config.storage.data_file), exist_ok=True)
-            
-            # 如果文件不存在，创建空文件
-            if not os.path.exists(config.storage.data_file):
-                with open(config.storage.data_file, 'w', encoding='utf-8') as f:
-                    json.dump({}, f)
+    def _load_monitored_items(self):
+        """从文件加载监控列表"""
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+        
+        if os.path.exists(self.data_file):
+            try:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    self.monitored_items = json.load(f)
+                # 兼容旧数据：将字符串状态转换为枚举
+                for url, item in self.monitored_items.items():
+                    if isinstance(item.get('last_status'), str) or item.get('last_status') is None:
+                        item['last_status'] = ProductStatus.UNKNOWN.value
+            except Exception as e:
+                logger.error(f"加载监控列表失败: {str(e)}")
                 self.monitored_items = {}
-                return
-            
-            # 读取文件内容
-            with open(config.storage.data_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-                # 如果是空文件或 null
-                if not data:
-                    self.monitored_items = {}
-                    return
-                    
-                # 如果数据是列表格式，转换为字典格式
-                if isinstance(data, list):
-                    self.monitored_items = {}
-                    for item in data:
-                        self.monitored_items[item['url']] = {
-                            'name': item['name'],
-                            'url': item['url'],
-                            'last_status': item.get('last_status')
-                        }
-                else:
-                    self.monitored_items = data
-                    
-            logger.info(f"已加载 {len(self.monitored_items)} 个监控商品")
-        except Exception as e:
-            logger.error(f"加载监控商品列表时出错: {str(e)}")
-            self.monitored_items = {}
 
-    def save_monitored_items(self) -> bool:
-        """保存监控商品列表到文件"""
+    def _save_monitored_items(self):
+        """保存监控列表到文件"""
         try:
-            os.makedirs(os.path.dirname(config.storage.data_file), exist_ok=True)
-            with open(config.storage.data_file, 'w', encoding='utf-8') as f:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
                 json.dump(self.monitored_items, f, ensure_ascii=False, indent=2)
-            return True
         except Exception as e:
-            logger.error(f"保存监控商品列表时出错: {str(e)}")
-            return False
-
-    async def add_monitored_item(self, url: str, name: str) -> bool:
-        """添加监控商品"""
-        try:
-            if url in self.monitored_items:
-                logger.warning(f"商品已在监控列表中: {url}")
-                return False
-            
-            self.monitored_items[url] = {
-                'name': name,
-                'url': url,
-                'last_status': None
-            }
-            return self.save_monitored_items()
-        except Exception as e:
-            logger.error(f"添加监控商品时出错: {str(e)}")
-            return False
-
-    async def remove_monitored_item(self, url: str) -> bool:
-        """移除监控商品"""
-        try:
-            if url not in self.monitored_items:
-                logger.warning(f"商品不在监控列表中: {url}")
-                return False
-            
-            del self.monitored_items[url]
-            return self.save_monitored_items()
-        except Exception as e:
-            logger.error(f"移除监控商品时出错: {str(e)}")
-            return False
+            logger.error(f"保存监控列表失败: {str(e)}")
 
     @staticmethod
     def parse_product_info(url: str) -> Dict[str, str]:
-        """从 URL 中解析商品信息"""
-        try:
-            # 移除 URL 中的查询参数
-            url = url.split('?')[0].strip('/')
-            
-            # 匹配商品 ID 和名称
-            pattern = r'/products/(\d+)/([^/]+)'
-            match = re.search(pattern, url)
-            if not match:
-                raise ValueError("无效的商品 URL 格式")
-            
-            product_id = match.group(1)
-            product_name = match.group(2).replace('-', ' ').strip()
-            
-            return {
-                'id': product_id,
-                'name': product_name,
-                'url': url
-            }
-        except Exception as e:
-            logger.error(f"解析商品 URL 时出错: {str(e)}")
-            raise ValueError("无法从 URL 解析商品信息")
+        """从 URL 解析商品信息"""
+        # 匹配商品 ID
+        match = re.search(r'/products/([^/]+)', url)
+        if not match:
+            raise ValueError("无效的商品 URL")
+        
+        product_id = match.group(1)
+        
+        # 从 URL 中提取商品名称（如果有）
+        name_match = re.search(r'/([^/]+)$', url)
+        name = name_match.group(1) if name_match else product_id
+        
+        return {
+            'id': product_id,
+            'name': name
+        }
+
+    async def add_monitored_item(self, url: str, name: str) -> bool:
+        """添加商品到监控列表"""
+        if url in self.monitored_items:
+            return False
+        
+        self.monitored_items[url] = {
+            'name': name,
+            'last_status': ProductStatus.UNKNOWN.value,
+            'last_check': None,
+            'last_notification': None
+        }
+        self._save_monitored_items()
+        return True
+
+    async def remove_monitored_item(self, url: str) -> bool:
+        """从监控列表中移除商品"""
+        if url not in self.monitored_items:
+            return False
+        
+        del self.monitored_items[url]
+        self._save_monitored_items()
+        return True
 
     @staticmethod
     def create_driver():
@@ -456,17 +430,91 @@ class Monitor:
             logger.error(f"检查商品可用性时出错: {str(e)}")
             return None
 
-    async def check_product_availability_with_delay(self, url: str, delay: int) -> Optional[bool]:
-        """带延迟的商品可用性检查"""
+    async def check_item_status(self, url: str) -> Tuple[ProductStatus, Optional[str]]:
+        """检查商品状态"""
         try:
-            # 检查商品可用性
-            is_available = await self.check_product_availability(url)
-            
-            # 添加延迟
-            await asyncio.sleep(delay)
-            
-            return is_available
-            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        logger.warning(f"请求商品页面失败: {url}, 状态码: {response.status}")
+                        return ProductStatus.UNKNOWN, None
+                    
+                    html = await response.text()
+                    
+                    # 记录响应内容的关键部分用于调试
+                    content_sample = html[:1000] if len(html) > 1000 else html
+                    logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
+                    
+                    # 检查商品状态
+                    if "sold out" in html.lower():
+                        return ProductStatus.SOLD_OUT, None
+                    elif "coming soon" in html.lower():
+                        return ProductStatus.COMING_SOON, None
+                    elif any(keyword in html.lower() for keyword in ["add to cart", "buy now"]):
+                        # 尝试提取价格
+                        price_match = re.search(r'price"[^>]*>([^<]+)', html)
+                        price = price_match.group(1) if price_match else None
+                        return ProductStatus.IN_STOCK, price
+                    elif "404" in html or "page not found" in html.lower():
+                        return ProductStatus.OFF_SHELF, None
+                    else:
+                        return ProductStatus.UNKNOWN, None
+                        
         except Exception as e:
-            logger.error(f"检查商品可用性时出错: {str(e)}")
-            return None 
+            logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
+            return ProductStatus.UNKNOWN, None
+
+    async def check_all_items(self) -> list:
+        """检查所有商品的状态"""
+        notifications = []
+        current_time = datetime.now().isoformat()
+        
+        for url, item in self.monitored_items.items():
+            # 获取当前状态
+            current_status, price = await self.check_item_status(url)
+            previous_status = item.get('last_status', ProductStatus.UNKNOWN.value)
+            
+            # 记录检查结果
+            logger.info(f"商品状态检查 - {item['name']} ({url}):")
+            logger.info(f"  当前状态: {current_status.value}")
+            logger.info(f"  之前状态: {previous_status}")
+            if price:
+                logger.info(f"  价格: {price}")
+            
+            # 状态发生变化时才发送通知
+            if current_status.value != previous_status:
+                logger.info(f"  状态变化: {previous_status} -> {current_status.value}")
+                
+                # 更新商品信息
+                item.update({
+                    'last_status': current_status.value,
+                    'last_check': current_time,
+                    'last_notification': current_time,
+                    'price': price
+                })
+                
+                # 生成通知消息
+                status_messages = {
+                    ProductStatus.IN_STOCK.value: f"🟢 商品已上架！{f'价格: {price}' if price else ''}",
+                    ProductStatus.SOLD_OUT.value: "🔴 商品已售罄",
+                    ProductStatus.COMING_SOON.value: "🟡 商品即将发售",
+                    ProductStatus.OFF_SHELF.value: "⚫ 商品已下架",
+                    ProductStatus.UNKNOWN.value: "❓ 商品状态未知"
+                }
+                
+                notification = {
+                    'url': url,
+                    'name': item['name'],
+                    'status': current_status.value,
+                    'message': status_messages.get(current_status.value, "状态未知"),
+                    'price': price
+                }
+                notifications.append(notification)
+            else:
+                # 仅更新检查时间
+                item['last_check'] = current_time
+            
+            # 保存更新后的数据
+            self._save_monitored_items()
+        
+        return notifications 

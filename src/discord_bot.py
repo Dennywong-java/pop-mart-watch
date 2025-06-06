@@ -288,6 +288,43 @@ class DiscordBot(discord.Client):
         logger.error(f"命令执行出错: {str(error)}")
         await ctx.send(f"命令执行出错: {str(error)}")
 
+    async def check_and_notify(self):
+        """检查商品状态并发送通知"""
+        try:
+            notifications = await self.monitor.check_all_items()
+            
+            if notifications:
+                channel = self.get_channel(self.config.discord.channel_id)
+                if channel:
+                    for notification in notifications:
+                        embed = discord.Embed(
+                            title=notification['name'],
+                            url=notification['url'],
+                            description=notification['message'],
+                            color=self._get_status_color(notification['status'])
+                        )
+                        
+                        if notification.get('price'):
+                            embed.add_field(name="价格", value=notification['price'], inline=True)
+                            
+                        await channel.send(embed=embed)
+                else:
+                    logger.error(f"找不到通知频道: {self.config.discord.channel_id}")
+                    
+        except Exception as e:
+            logger.error(f"检查商品状态时出错: {str(e)}")
+            
+    def _get_status_color(self, status: str) -> discord.Color:
+        """获取状态对应的颜色"""
+        status_colors = {
+            'in_stock': discord.Color.green(),
+            'sold_out': discord.Color.red(),
+            'coming_soon': discord.Color.gold(),
+            'off_shelf': discord.Color.dark_gray(),
+            'unknown': discord.Color.light_gray()
+        }
+        return status_colors.get(status, discord.Color.default())
+
 async def run_bot(config: Config):
     """运行 Discord 机器人"""
     try:
