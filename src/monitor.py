@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from src.config import config
 import json
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urlunparse
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -248,127 +248,21 @@ class Monitor:
             # 性能优化
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            options.add_argument('--disable-gpu-sandbox')
-            options.add_argument('--disable-gpu-compositing')
-            options.add_argument('--disable-gpu-program-cache')
-            options.add_argument('--disable-gpu-watchdog')
-            options.add_argument('--disable-webgl')
-            options.add_argument('--disable-webgl2')
-            options.add_argument('--disable-gl-extensions')
-            
-            # 禁用不必要的功能
-            options.add_argument('--disable-logging')
-            options.add_argument('--disable-in-process-stack-traces')
-            options.add_argument('--disable-login-animations')
-            options.add_argument('--disable-modal-animations')
-            options.add_argument('--disable-reading-from-canvas')
-            options.add_argument('--disable-site-isolation-trials')
-            options.add_argument('--disable-smooth-scrolling')
-            options.add_argument('--disable-speech-api')
-            
-            # 设置页面加载策略
-            options.page_load_strategy = 'eager'
-            
-            # 设置超时时间
-            options.set_capability('pageLoadStrategy', 'eager')
-            options.set_capability('unhandledPromptBehavior', 'accept')
-            
-            # 禁用图片和其他媒体加载
-            prefs = {
-                'profile.managed_default_content_settings.images': 2,
-                'profile.managed_default_content_settings.media_stream': 2,
-                'profile.managed_default_content_settings.plugins': 2,
-                'profile.default_content_settings.popups': 2,
-                'profile.managed_default_content_settings.notifications': 2,
-                'profile.managed_default_content_settings.automatic_downloads': 2,
-                'profile.managed_default_content_settings.cookies': 2,
-                'profile.managed_default_content_settings.javascript': 1,
-                'profile.managed_default_content_settings.geolocation': 2,
-                'profile.default_content_setting_values.notifications': 2,
-                'profile.default_content_setting_values.media_stream_mic': 2,
-                'profile.default_content_setting_values.media_stream_camera': 2,
-                'profile.default_content_setting_values.geolocation': 2,
-                'profile.default_content_setting_values.cookies': 2,
-                'download.default_directory': temp_dir,
-                'download.prompt_for_download': False,
-                'download.directory_upgrade': True,
-                'safebrowsing.enabled': False,
-                'credentials_enable_service': False,
-                'password_manager_enabled': False,
-                'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
-                'webrtc.multiple_routes_enabled': False,
-                'webrtc.nonproxied_udp_enabled': False
-            }
-            options.add_experimental_option('prefs', prefs)
-            
-            # 禁用开发者工具和自动化提示
-            options.add_experimental_option('excludeSwitches', [
-                'enable-automation',
-                'enable-logging',
-                'enable-blink-features',
-                'ignore-certificate-errors',
-                'safebrowsing-disable-download-protection',
-                'safebrowsing-disable-auto-update',
-                'disable-client-side-phishing-detection'
-            ])
             
             # 创建 WebDriver
-            max_retries = 3
-            retry_delay = 2
-            last_error = None
+            service = Service(chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=options)
             
-            for attempt in range(max_retries):
-                try:
-                    # 在每次尝试前清理可能存在的 Chrome 进程
-                    try:
-                        os.system('pkill -f chrome')
-                        time.sleep(1)  # 等待进程完全终止
-                    except:
-                        pass
-                    
-                    service = Service(executable_path=chromedriver_path)
-                    
-                    # 只在 Windows 平台设置 creation_flags
-                    if platform.system() == 'Windows':
-                        service.creation_flags = 0x08000000  # 禁用窗口
-                    
-                    driver = webdriver.Chrome(service=service, options=options)
-                    driver.set_page_load_timeout(30)
-                    driver.set_script_timeout(30)
-                    
-                    # 验证 WebDriver 是否正常工作
-                    driver.execute_script('return navigator.userAgent')
-                    
-                    return driver
-                except Exception as e:
-                    last_error = e
-                    logger.warning(f"创建 WebDriver 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                    try:
-                        if 'driver' in locals():
-                            driver.quit()
-                    except:
-                        pass
-                    
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-            
-            logger.error(f"创建 WebDriver 失败，已达到最大重试次数: {str(last_error)}")
-            return None
+            return driver
             
         except Exception as e:
             logger.error(f"创建 WebDriver 时出错: {str(e)}")
-            return None
-        finally:
-            # 清理所有临时目录
-            for dir_path in Monitor._temp_dirs[:]:  # 使用切片创建副本以避免在迭代时修改列表
+            if temp_dir:
                 try:
-                    if os.path.exists(dir_path):
-                        shutil.rmtree(dir_path, ignore_errors=True)
-                    Monitor._temp_dirs.remove(dir_path)
-                except Exception as e:
-                    logger.warning(f"清理临时目录失败 {dir_path}: {str(e)}")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except:
+                    pass
+            return None
 
     @staticmethod
     def normalize_domain(url):
@@ -551,119 +445,4 @@ class Monitor:
             
         except Exception as e:
             logger.error(f"检查商品可用性时出错: {str(e)}")
-            return None
-
-    async def get_product_info(self, url: str, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, str]:
-        """获取商品信息"""
-        try:
-            # 解析商品 ID 和名称
-            product_info = self.parse_product_url(url)
-            if not product_info:
-                return {}
-
-            # 检查网络连接
-            is_available, new_url = await self.check_network(url)
-            if not is_available:
-                logger.warning(f"无法连接到服务器: {url}")
-                return product_info
-
-            # 更新 URL
-            url = new_url
-
-            # 创建或使用现有的会话
-            should_close_session = False
-            if session is None:
-                session = aiohttp.ClientSession()
-                should_close_session = True
-
-            try:
-                # 尝试从 API 获取商品信息
-                api_info = await self._get_product_info_from_api(product_info['id'], session)
-                if api_info:
-                    product_info.update(api_info)
-                    return product_info
-
-                # 如果 API 获取失败，尝试从 HTML 页面获取
-                html_info = await self._get_product_info_from_html(url, session)
-                if html_info:
-                    product_info.update(html_info)
-
-            finally:
-                if should_close_session:
-                    await session.close()
-
-            return product_info
-
-        except Exception as e:
-            logger.error(f"获取商品信息时出错: {str(e)}")
-            return {}
-
-    async def _get_product_info_from_api(self, product_id: str, session: aiohttp.ClientSession) -> Dict[str, str]:
-        """从 API 获取商品信息"""
-        api_urls = [
-            f"https://us.popmart.com/api/v2/products/{product_id}",
-            f"https://shop.popmart.com/api/v2/products/{product_id}"
-        ]
-
-        for api_url in api_urls:
-            try:
-                async with session.get(api_url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return {
-                            'title': data.get('title'),
-                            'image_url': data.get('image', {}).get('src'),
-                            'available': data.get('available', False)
-                        }
-                    else:
-                        logger.warning(f"从 API 获取商品信息失败: {api_url}, 状态码: {response.status}")
-            except Exception as e:
-                logger.warning(f"从 API 获取商品信息出错: {api_url}, {str(e)}")
-
-        return {}
-
-    async def _get_product_info_from_html(self, url: str, session: aiohttp.ClientSession) -> Dict[str, str]:
-        """从 HTML 页面获取商品信息"""
-        try:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-
-                    # 尝试获取商品标题
-                    title = None
-                    title_elem = soup.find('h1', {'class': 'product-title'})
-                    if title_elem:
-                        title = title_elem.text.strip()
-
-                    # 尝试获取商品图片
-                    image_url = None
-                    image_elem = soup.find('img', {'class': 'product-image'})
-                    if image_elem:
-                        image_url = image_elem.get('src')
-
-                    # 检查商品状态
-                    available = False
-                    for keyword in self.AVAILABLE_KEYWORDS:
-                        if keyword.lower() in html.lower():
-                            available = True
-                            break
-
-                    if not available:
-                        for keyword in self.SOLD_OUT_KEYWORDS:
-                            if keyword.lower() in html.lower():
-                                available = False
-                                break
-
-                    return {
-                        'title': title,
-                        'image_url': image_url,
-                        'available': available
-                    }
-                else:
-                    logger.warning(f"从 HTML 获取商品信息失败: {url}, 状态码: {response.status}")
-
-        except Exception as e:
-            logger.warning(f"从 HTML 获取商品信息出错: {url}, {str(e)}")
-
-        return {} 
+            return None 

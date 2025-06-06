@@ -40,7 +40,7 @@ class DiscordBot(discord.Client):
             name="watch",
             description="添加商品到监控列表"
         )
-        async def watch(interaction: discord.Interaction, url: str):
+        async def watch(interaction: discord.Interaction, url: str, name: str):
             try:
                 # 验证 URL
                 if not any(domain in url for domain in self.config.monitor.allowed_domains):
@@ -49,32 +49,19 @@ class DiscordBot(discord.Client):
                     )
                     return
                 
-                # 获取商品信息
-                async with aiohttp.ClientSession() as session:
-                    product_info = await self.monitor.get_product_info(url, session)
-                
-                if not product_info:
-                    await interaction.response.send_message("无法获取商品信息，请检查 URL 是否正确")
-                    return
-                
                 # 添加到监控列表
-                success = await self.monitor.add_monitored_item(url, product_info.get('title', product_info['name']))
+                success = await self.monitor.add_monitored_item(url, name)
                 if success:
                     # 构建嵌入消息
                     embed = discord.Embed(
                         title="已添加商品到监控列表",
-                        description=product_info.get('title', product_info['name']),
+                        description=name,
                         color=discord.Color.green()
                     )
-                    embed.add_field(name="商品 ID", value=product_info['id'], inline=True)
-                    embed.add_field(name="状态", value="可购买" if product_info.get('available') else "已售罄", inline=True)
                     embed.add_field(name="URL", value=url, inline=False)
                     
-                    if product_info.get('image_url'):
-                        embed.set_thumbnail(url=product_info['image_url'])
-                    
                     await interaction.response.send_message(embed=embed)
-                    logger.info(f"添加商品到监控列表: {product_info.get('title', product_info['name'])} ({url})")
+                    logger.info(f"添加商品到监控列表: {name} ({url})")
                 else:
                     await interaction.response.send_message("添加商品失败，可能已经在监控列表中")
                 
@@ -176,38 +163,31 @@ class DiscordBot(discord.Client):
         """监控商品状态"""
         while True:
             try:
-                async with aiohttp.ClientSession() as session:
-                    for url, item in self.monitor.monitored_items.items():
-                        try:
-                            # 获取商品信息
-                            product_info = await self.monitor.get_product_info(url, session)
-                            if not product_info:
-                                continue
+                for url, item in self.monitor.monitored_items.items():
+                    try:
+                        # 检查商品状态
+                        is_available = await self.monitor.check_product_availability_with_delay(
+                            url, self.config.monitor.request_delay
+                        )
+                        
+                        # 如果状态改变，发送通知
+                        if is_available != item.get('last_status'):
+                            item['last_status'] = is_available
+                            self.monitor.save_monitored_items()
                             
-                            # 检查商品状态
-                            is_available = product_info.get('available', False)
+                            # 构建嵌入消息
+                            embed = discord.Embed(
+                                title="商品状态更新",
+                                description=item['name'],
+                                color=discord.Color.green() if is_available else discord.Color.red()
+                            )
+                            embed.add_field(name="状态", value="可购买 ✅" if is_available else "已售罄 ❌", inline=True)
+                            embed.add_field(name="URL", value=url, inline=False)
                             
-                            # 如果状态改变，发送通知
-                            if is_available != item.get('last_status'):
-                                item['last_status'] = is_available
-                                self.monitor.save_monitored_items()
-                                
-                                # 构建嵌入消息
-                                embed = discord.Embed(
-                                    title="商品状态更新",
-                                    description=item['name'],
-                                    color=discord.Color.green() if is_available else discord.Color.red()
-                                )
-                                embed.add_field(name="状态", value="可购买 ✅" if is_available else "已售罄 ❌", inline=True)
-                                embed.add_field(name="URL", value=url, inline=False)
-                                
-                                if product_info.get('image_url'):
-                                    embed.set_thumbnail(url=product_info['image_url'])
-                                
-                                await self.send_notification(embed=embed)
-                                
-                        except Exception as e:
-                            logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
+                            await self.send_notification(embed=embed)
+                            
+                    except Exception as e:
+                        logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
                 
                 # 等待下一次检查
                 await asyncio.sleep(self.config.monitor.check_interval)
