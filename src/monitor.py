@@ -35,22 +35,11 @@ class Monitor:
     负责检查商品页面的可用性状态
     """
     
-    # 监控项目文件路径
-    MONITORED_ITEMS_FILE = 'monitored_items.json'
+    def __init__(self):
+        """初始化监控器"""
+        self.monitored_items = {}
+        self.load_monitored_items()
     
-    # 临时目录列表
-    _temp_dirs = []
-    
-    @classmethod
-    def cleanup_temp_dirs(cls):
-        """清理所有临时目录"""
-        for temp_dir in cls._temp_dirs:
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                logger.warning(f"清理临时目录失败: {str(e)}")
-        cls._temp_dirs.clear()
-
     # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
         'ADD TO BAG',
@@ -80,6 +69,70 @@ class Monitor:
         'Unavailable',
         'Item unavailable'
     ]
+    
+    # 临时目录列表
+    _temp_dirs = []
+    
+    @classmethod
+    def cleanup_temp_dirs(cls):
+        """清理所有临时目录"""
+        for temp_dir in cls._temp_dirs:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"清理临时目录失败: {str(e)}")
+        cls._temp_dirs.clear()
+
+    def load_monitored_items(self) -> None:
+        """从文件加载监控商品列表"""
+        try:
+            if os.path.exists(config.storage.data_file):
+                with open(config.storage.data_file, 'r', encoding='utf-8') as f:
+                    self.monitored_items = json.load(f)
+        except Exception as e:
+            logger.error(f"加载监控商品列表时出错: {str(e)}")
+            self.monitored_items = {}
+
+    def save_monitored_items(self) -> bool:
+        """保存监控商品列表到文件"""
+        try:
+            os.makedirs(os.path.dirname(config.storage.data_file), exist_ok=True)
+            with open(config.storage.data_file, 'w', encoding='utf-8') as f:
+                json.dump(self.monitored_items, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            logger.error(f"保存监控商品列表时出错: {str(e)}")
+            return False
+
+    async def add_monitored_item(self, url: str, name: str) -> bool:
+        """添加监控商品"""
+        try:
+            if url in self.monitored_items:
+                logger.warning(f"商品已在监控列表中: {url}")
+                return False
+            
+            self.monitored_items[url] = {
+                'name': name,
+                'url': url,
+                'last_status': None
+            }
+            return self.save_monitored_items()
+        except Exception as e:
+            logger.error(f"添加监控商品时出错: {str(e)}")
+            return False
+
+    async def remove_monitored_item(self, url: str) -> bool:
+        """移除监控商品"""
+        try:
+            if url not in self.monitored_items:
+                logger.warning(f"商品不在监控列表中: {url}")
+                return False
+            
+            del self.monitored_items[url]
+            return self.save_monitored_items()
+        except Exception as e:
+            logger.error(f"移除监控商品时出错: {str(e)}")
+            return False
 
     @staticmethod
     def parse_product_url(url: str) -> Dict[str, str]:
@@ -98,71 +151,6 @@ class Monitor:
         except Exception as e:
             logger.error(f"解析产品URL时出错: {e}")
         return {}
-
-    @staticmethod
-    def load_monitored_items() -> List[Dict[str, str]]:
-        """加载监控项目列表"""
-        try:
-            if os.path.exists(Monitor.MONITORED_ITEMS_FILE):
-                with open(Monitor.MONITORED_ITEMS_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            return []
-        except Exception as e:
-            logger.error(f"Error loading monitored items: {str(e)}")
-            return []
-
-    @staticmethod
-    def save_monitored_items(items: List[Dict[str, str]]) -> bool:
-        """保存监控项目列表"""
-        try:
-            with open(Monitor.MONITORED_ITEMS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(items, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving monitored items: {str(e)}")
-            return False
-
-    @staticmethod
-    async def add_monitored_item(url: str) -> bool:
-        """添加监控项目"""
-        try:
-            product_info = Monitor.parse_product_url(url)
-            if not product_info:
-                logger.error(f"Invalid product URL: {url}")
-                return False
-            
-            items = Monitor.load_monitored_items()
-            if any(item['id'] == product_info['id'] for item in items):
-                logger.warning(f"Product {product_info['id']} already monitored")
-                return False
-            
-            items.append(product_info)
-            return Monitor.save_monitored_items(items)
-        except Exception as e:
-            logger.error(f"Error adding monitored item: {str(e)}")
-            return False
-
-    @staticmethod
-    async def remove_monitored_item(url: str) -> bool:
-        """移除监控项目"""
-        try:
-            product_info = Monitor.parse_product_url(url)
-            if not product_info:
-                logger.error(f"Invalid product URL: {url}")
-                return False
-            
-            items = Monitor.load_monitored_items()
-            original_length = len(items)
-            items = [item for item in items if item['id'] != product_info['id']]
-            
-            if len(items) == original_length:
-                logger.warning(f"Product {product_info['id']} not found in monitored items")
-                return False
-            
-            return Monitor.save_monitored_items(items)
-        except Exception as e:
-            logger.error(f"Error removing monitored item: {str(e)}")
-            return False
 
     @staticmethod
     def create_driver():
@@ -485,100 +473,72 @@ class Monitor:
             return False, url
 
     @staticmethod
-    async def check_product_availability(url, session):
+    async def check_product_availability(url: str) -> Optional[bool]:
         """检查商品是否可购买"""
         try:
-            # 首先检查网络连接
-            network_ok, resolved_url = Monitor.check_network(url)
-            if not network_ok:
-                logger.error("网络连接检查失败")
-                return False
+            # 创建 Chrome WebDriver
+            driver = Monitor.create_driver()
+            if not driver:
+                logger.error("无法创建 WebDriver")
+                return None
             
-            driver = None
             try:
-                driver = Monitor.create_driver()
-                if not driver:
-                    logger.error("无法创建 WebDriver")
-                    return False
-
                 # 设置页面加载超时
                 driver.set_page_load_timeout(30)
-                driver.set_script_timeout(30)
-
-                # 添加重试机制
-                max_retries = 3
-                retry_delay = 2
-
-                for attempt in range(max_retries):
-                    try:
-                        # 清除所有 cookies
-                        driver.delete_all_cookies()
-                        
-                        # 获取域名
-                        main_domain = resolved_url.split('/')[2]
-                        
-                        # 设置网络选项
-                        driver.execute_cdp_cmd('Network.enable', {})
-                        driver.execute_cdp_cmd('Network.setBypassServiceWorker', {'bypass': True})
-                        
-                        # 先访问主域名以建立连接
-                        driver.get(f'https://{main_domain}')
-                        
-                        # 等待一下以确保连接建立
-                        time.sleep(2)
-                        
-                        # 然后访问实际的 URL
-                        driver.get(resolved_url)
-                        
-                        # 等待页面加载完成
-                        WebDriverWait(driver, 30).until(
-                            lambda d: d.execute_script('return document.readyState') == 'complete'
-                        )
-                        
-                        # 检查是否有购买按钮
-                        buy_button = driver.find_element(By.CSS_SELECTOR, '[data-testid="AddToCartButton"]')
-                        return not ('disabled' in buy_button.get_attribute('class').lower() or 
-                                  'sold' in buy_button.get_attribute('class').lower())
-                        
-                    except Exception as e:
-                        if 'net::ERR_NAME_NOT_RESOLVED' in str(e):
-                            logger.warning(f"DNS 解析失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                        else:
-                            logger.warning(f"检查商品可用性时出错 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                        
-                        if attempt < max_retries - 1:
-                            time.sleep(retry_delay)
-                            retry_delay *= 2
-                            continue
-                        else:
-                            logger.error(f"检查商品可用性失败，已达到最大重试次数: {str(e)}")
-                            return False
-
-            except Exception as e:
-                logger.error(f"检查商品可用性时出错: {str(e)}")
-                return False
                 
+                # 访问商品页面
+                driver.get(url)
+                
+                # 等待页面加载完成
+                WebDriverWait(driver, 30).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # 获取页面内容
+                page_content = driver.page_source.lower()
+                
+                # 检查是否可购买
+                for keyword in Monitor.AVAILABLE_KEYWORDS:
+                    if keyword.lower() in page_content:
+                        return True
+                
+                # 检查是否售罄
+                for keyword in Monitor.SOLD_OUT_KEYWORDS:
+                    if keyword.lower() in page_content:
+                        return False
+                
+                # 如果没有找到任何关键词，返回 None
+                return None
+                
+            except TimeoutException:
+                logger.error(f"页面加载超时: {url}")
+                return None
+            except WebDriverException as e:
+                logger.error(f"WebDriver 错误: {str(e)}")
+                return None
             finally:
                 try:
-                    if driver:
-                        driver.quit()
+                    driver.quit()
                 except:
                     pass
+                
+        except Exception as e:
+            logger.error(f"检查商品可用性时出错: {str(e)}")
+            return None
 
-            return False
+    async def check_product_availability_with_delay(self, url: str, delay: int) -> Optional[bool]:
+        """带延迟的商品可用性检查"""
+        try:
+            # 检查商品可用性
+            is_available = await self.check_product_availability(url)
+            
+            # 添加延迟
+            await asyncio.sleep(delay)
+            
+            return is_available
             
         except Exception as e:
             logger.error(f"检查商品可用性时出错: {str(e)}")
-            return False
-
-    @staticmethod
-    async def check_product_availability_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
-        """带延迟的商品监控"""
-        try:
-            await asyncio.sleep(config.request_delay)
-            return await Monitor.check_product_availability(url, session)
-        except Exception as e:
-            logger.error(f"检查商品状态时出错: {str(e)}")
             return None
 
     async def get_product_info(self, url: str, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, str]:

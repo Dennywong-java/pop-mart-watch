@@ -39,9 +39,17 @@ logs/
 
 # Local configuration
 .env
+config.local.yaml
 config.yaml  # 实际配置文件
 
 # Project specific
 monitored_items.json  # 监控项目文件
 data/  # 数据目录 
 monitored_items.json
+
+# Chrome
+chrome_data/
+.chrome/
+
+# OS
+Thumbs.db
