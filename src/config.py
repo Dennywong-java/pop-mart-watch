@@ -89,6 +89,13 @@ class Config:
         self.log_level = "INFO"
         self.log_file = "logs/bot.log"
         self.log_console = True
+        self.log_format = '%(asctime)s - %(levelname)s - %(message)s'
+        self.third_party_levels = {
+            'discord': 'WARNING',
+            'selenium': 'WARNING',
+            'urllib3': 'WARNING',
+            'asyncio': 'WARNING'
+        }
         
         # 加载配置前先设置基本日志
         logging.basicConfig(
@@ -120,17 +127,13 @@ class Config:
         
         # 文件处理器
         file_handler = logging.FileHandler(self.log_file)
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
+        file_handler.setFormatter(logging.Formatter(self.log_format))
         handlers.append(file_handler)
         
         # 控制台处理器
         if self.log_console:
             console_handler = logging.StreamHandler()
-            console_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
+            console_handler.setFormatter(logging.Formatter(self.log_format))
             handlers.append(console_handler)
         
         # 应用配置
@@ -139,10 +142,10 @@ class Config:
             handlers=handlers
         )
         
-        # 设置 discord.py 的日志级别为 DEBUG
-        logging.getLogger('discord').setLevel(logging.DEBUG)
-        logging.getLogger('discord.http').setLevel(logging.DEBUG)
-        logging.getLogger('discord.gateway').setLevel(logging.DEBUG)
+        # 设置第三方库的日志级别
+        for logger_name, level in self.third_party_levels.items():
+            level_value = getattr(logging, level.upper(), logging.WARNING)
+            logging.getLogger(logger_name).setLevel(level_value)
         
         logger.info("日志配置已更新")
         
@@ -177,6 +180,13 @@ class Config:
             self.log_level = logging_config.get('level', "INFO")
             self.log_file = logging_config.get('file', "logs/bot.log")
             self.log_console = logging_config.get('console', True)
+            self.log_format = logging_config.get('format', '%(asctime)s - %(levelname)s - %(message)s')
+            self.third_party_levels = logging_config.get('third_party_levels', {
+                'discord': 'WARNING',
+                'selenium': 'WARNING',
+                'urllib3': 'WARNING',
+                'asyncio': 'WARNING'
+            })
             
             logger.info("配置加载成功")
             

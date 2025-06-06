@@ -10,14 +10,13 @@ from bs4 import BeautifulSoup
 from src.config import config
 import json
 import re
+from urllib.parse import quote
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 
 logger = logging.getLogger(__name__)
 
@@ -154,108 +153,98 @@ class Monitor:
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
             options.add_argument('--window-size=1920,1080')
-            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36')
+            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.7151.68 Safari/537.36')
             
             # 为 M1/M2 Mac 特别配置
             if os.uname().machine == 'arm64':
                 options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             
-            # 使用 ChromeDriverManager 安装并获取正确版本的 ChromeDriver
-            driver_path = ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
-            
-            logger.info(f"使用 ChromeDriver 路径: {driver_path}")
-            
-            # 创建 Service 对象
-            service = Service(executable_path=driver_path)
-            
-            # 创建 WebDriver
-            driver = webdriver.Chrome(service=service, options=options)
+            # 让 Selenium Manager 自动处理 ChromeDriver
+            driver = webdriver.Chrome(options=options)
             return driver
         except Exception as e:
             logger.error(f"创建 WebDriver 失败: {str(e)}")
             return None
 
     @staticmethod
-    async def check_product_availability(url: str, session: aiohttp.ClientSession) -> bool:
+    async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
         """检查商品是否可购买"""
         try:
+            # 正确处理URL编码
+            url_parts = url.split('/')
+            product_name = url_parts[-1]
+            product_id = url_parts[-2]
+            encoded_name = quote(product_name, safe='')
+            fixed_url = f"{'/'.join(url_parts[:-1])}/{encoded_name}"
+            
             driver = Monitor.create_driver()
             if not driver:
                 return None
             
             try:
-                # 加载页面
-                driver.get(url)
+                logger.debug(f"访问商品页面: {fixed_url}")
+                driver.get(fixed_url)
                 
-                # 等待页面加载完成
+                # 等待页面加载
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
                 
-                # 记录页面内容以便调试
-                logger.debug(f"页面标题: {driver.title}")
-                logger.debug(f"页面 URL: {driver.current_url}")
+                # 获取页面标题和URL用于调试
+                title = driver.title
+                current_url = driver.current_url
+                logger.debug(f"页面标题: {title}")
+                logger.debug(f"页面 URL: {current_url}")
                 
-                # 检查所有可能的按钮和状态指示器
-                elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'button') or self::button or self::a or self::div or self::span or self::p or self::input]")
+                # 如果页面返回400，尝试使用备用域名
+                if "400 Bad Request" in title:
+                    alternate_url = fixed_url.replace("popmart.com", "pop-mart.com")
+                    logger.debug(f"尝试备用域名: {alternate_url}")
+                    driver.get(alternate_url)
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
                 
-                for element in elements:
+                # 查找可购买状态相关元素
+                buttons = driver.find_elements(By.XPATH, 
+                    "//*[contains(@class, 'button') or self::button or self::a or self::div or self::span or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6]"
+                )
+                
+                # 查找库存状态相关元素
+                status_elements = driver.find_elements(By.XPATH,
+                    "//*[contains(@class, 'status') or contains(@class, 'stock')]"
+                )
+                
+                # 检查所有文本内容
+                all_texts = []
+                for element in buttons + status_elements:
                     try:
                         text = element.text.strip()
-                        class_name = element.get_attribute("class")
-                        disabled = element.get_attribute("disabled")
-                        
-                        # 记录找到的元素信息
                         if text:
-                            logger.debug(f"找到元素: text='{text}', class={class_name}, disabled={disabled}")
-                        
-                        # 检查可购买状态
-                        if any(keyword.lower() in text.lower() for keyword in Monitor.AVAILABLE_KEYWORDS):
-                            if not disabled and not ('sold-out' in str(class_name).lower()):
-                                logger.info(f"商品可购买: {text}")
-                                return True
-                        
-                        # 检查售罄状态
-                        if any(keyword.lower() in text.lower() for keyword in Monitor.SOLD_OUT_KEYWORDS):
-                            logger.info(f"商品已售罄: {text}")
-                            return False
-                    except Exception as e:
-                        logger.warning(f"处理元素时出错: {str(e)}")
+                            all_texts.append(text.upper())
+                    except:
                         continue
                 
-                # 检查商品状态的其他指示器
-                status_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'status') or contains(@class, 'stock')]")
-                for element in status_elements:
-                    try:
-                        text = element.text.strip()
-                        logger.debug(f"找到状态元素: {text}")
-                        
-                        if any(keyword.lower() in text.lower() for keyword in Monitor.AVAILABLE_KEYWORDS):
-                            logger.info(f"商品可购买（状态元素）: {text}")
-                            return True
-                        
-                        if any(keyword.lower() in text.lower() for keyword in Monitor.SOLD_OUT_KEYWORDS):
-                            logger.info(f"商品已售罄（状态元素）: {text}")
-                            return False
-                    except Exception as e:
-                        logger.warning(f"处理状态元素时出错: {str(e)}")
-                        continue
+                # 如果找不到任何相关元素，返回None
+                if not all_texts:
+                    logger.warning("无法确定商品状态: 未找到相关关键词")
+                    return None
                 
-                # 如果没有找到明确的状态指示器，记录警告
-                logger.warning("无法确定商品状态: 未找到相关关键词")
+                # 检查是否可购买
+                for text in all_texts:
+                    if any(keyword.upper() in text for keyword in Monitor.AVAILABLE_KEYWORDS):
+                        return True
+                    if any(keyword.upper() in text for keyword in Monitor.SOLD_OUT_KEYWORDS):
+                        return False
+                
+                logger.warning(f"无法确定商品状态: 找到的文本 - {', '.join(all_texts)}")
                 return None
                 
-            except TimeoutException:
-                logger.error("页面加载超时")
-                return None
-            except Exception as e:
-                logger.error(f"检查商品状态时出错: {str(e)}")
-                return None
             finally:
                 driver.quit()
                 
         except Exception as e:
-            logger.error(f"检查商品状态时出错: {str(e)}")
+            logger.error(f"检查商品可用性时出错: {str(e)}")
             return None
 
     @staticmethod
