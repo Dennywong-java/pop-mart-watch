@@ -175,101 +175,114 @@ class Monitor:
     def create_driver():
         """创建 Chrome WebDriver 实例"""
         temp_dir = None
-        try:
-            # 创建临时目录
-            temp_dir = tempfile.mkdtemp(prefix='chrome_')
-            user_data_dir = tempfile.mkdtemp(prefix='chrome_user_')
-            Monitor._temp_dirs.extend([temp_dir, user_data_dir])
-            
-            # 检查并设置 ChromeDriver 路径
-            chromedriver_path = None
+        max_retries = 3
+        retry_delay = 2  # 秒
+        
+        for attempt in range(max_retries):
             try:
-                # 首先检查环境变量
-                chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+                # 创建临时目录
+                temp_dir = tempfile.mkdtemp(prefix='chrome_')
+                user_data_dir = tempfile.mkdtemp(prefix='chrome_user_')
+                Monitor._temp_dirs.extend([temp_dir, user_data_dir])
                 
-                # 如果环境变量未设置，尝试在系统中查找
-                if not chromedriver_path:
-                    if platform.system() == 'Linux':
-                        # 在 Linux 上尝试常见位置
-                        possible_paths = [
-                            '/usr/local/bin/chromedriver',
-                            '/usr/bin/chromedriver',
-                            '/snap/bin/chromedriver',
-                        ]
-                        for path in possible_paths:
-                            if os.path.exists(path):
-                                chromedriver_path = path
-                                break
-                        
-                        # 如果还是找不到，尝试使用 which 命令
-                        if not chromedriver_path:
-                            try:
-                                chromedriver_path = subprocess.check_output(['which', 'chromedriver']).decode().strip()
-                            except:
-                                pass
-            except Exception as e:
-                logger.warning(f"查找 ChromeDriver 路径时出错: {str(e)}")
-            
-            if not chromedriver_path or not os.path.exists(chromedriver_path):
-                logger.error("未找到 ChromeDriver，请确保它已安装并在系统路径中")
-                return None
-            
-            # 配置 Chrome 选项
-            options = webdriver.ChromeOptions()
-            
-            # 设置 Chrome 二进制文件路径
-            chrome_binary = os.getenv('CHROME_BINARY', '/usr/bin/google-chrome')
-            if os.path.exists(chrome_binary):
-                options.binary_location = chrome_binary
-            
-            # 基本配置
-            options.add_argument('--headless=new')  # 使用新的无头模式
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-setuid-sandbox')
-            options.add_argument('--disable-software-rasterizer')
-            
-            # 用户数据目录配置
-            options.add_argument('--no-first-run')
-            options.add_argument('--no-default-browser-check')
-            options.add_argument('--password-store=basic')
-            options.add_argument('--use-mock-keychain')
-            options.add_argument(f'--user-data-dir={user_data_dir}')  # 使用临时目录
-            options.add_argument(f'--disk-cache-dir={os.path.join(user_data_dir, "cache")}')
-            options.add_argument('--disk-cache-size=1')
-            options.add_argument('--media-cache-size=1')
-            options.add_argument('--aggressive-cache-discard')
-            
-            # 网络配置
-            options.add_argument('--dns-prefetch-disable')  # 禁用 DNS 预取
-            options.add_argument('--no-proxy-server')  # 禁用代理
-            options.add_argument('--disable-ipv6')  # 禁用 IPv6
-            options.add_argument('--disable-background-networking')  # 禁用后台网络
-            options.add_argument('--disable-sync')  # 禁用同步
-            options.add_argument('--disable-web-security')  # 禁用网络安全限制
-            options.add_argument('--ignore-certificate-errors')  # 忽略证书错误
-            options.add_argument('--ignore-ssl-errors')  # 忽略 SSL 错误
-            
-            # 性能优化
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            
-            # 创建 WebDriver
-            service = Service(chromedriver_path)
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            return driver
-            
-        except Exception as e:
-            logger.error(f"创建 WebDriver 时出错: {str(e)}")
-            if temp_dir:
+                # 检查并设置 ChromeDriver 路径
+                chromedriver_path = None
                 try:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                except:
-                    pass
-            return None
+                    # 首先检查环境变量
+                    chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+                    
+                    # 如果环境变量未设置，尝试在系统中查找
+                    if not chromedriver_path:
+                        if platform.system() == 'Linux':
+                            # 在 Linux 上尝试常见位置
+                            possible_paths = [
+                                '/usr/local/bin/chromedriver',
+                                '/usr/bin/chromedriver',
+                                '/snap/bin/chromedriver',
+                            ]
+                            for path in possible_paths:
+                                if os.path.exists(path):
+                                    chromedriver_path = path
+                                    break
+                            
+                            # 如果还是找不到，尝试使用 which 命令
+                            if not chromedriver_path:
+                                try:
+                                    chromedriver_path = subprocess.check_output(['which', 'chromedriver']).decode().strip()
+                                except:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"查找 ChromeDriver 路径时出错: {str(e)}")
+                
+                if not chromedriver_path or not os.path.exists(chromedriver_path):
+                    logger.error("未找到 ChromeDriver，请确保它已安装并在系统路径中")
+                    return None
+                
+                # 配置 Chrome 选项
+                options = webdriver.ChromeOptions()
+                
+                # 基本设置
+                options.add_argument('--headless')  # 无界面模式
+                options.add_argument('--no-sandbox')  # 在Linux上需要
+                options.add_argument('--disable-dev-shm-usage')  # 避免内存问题
+                
+                # 性能优化
+                options.add_argument('--disable-gpu')  # 禁用GPU加速
+                options.add_argument('--disable-software-rasterizer')  # 禁用软件光栅化
+                options.add_argument('--disable-extensions')  # 禁用扩展
+                options.add_argument('--disable-infobars')  # 禁用信息栏
+                options.add_argument('--disable-notifications')  # 禁用通知
+                options.add_argument('--disable-popup-blocking')  # 禁用弹窗阻止
+                
+                # 内存优化
+                options.add_argument('--single-process')  # 单进程模式
+                options.add_argument('--disable-application-cache')  # 禁用应用缓存
+                options.add_argument('--media-cache-size=0')  # 禁用媒体缓存
+                options.add_argument('--disk-cache-size=0')  # 禁用磁盘缓存
+                
+                # 网络优化
+                options.add_argument('--disable-background-networking')  # 禁用后台网络
+                options.add_argument('--disable-default-apps')  # 禁用默认应用
+                options.add_argument('--no-first-run')  # 跳过首次运行
+                
+                # 设置用户数据目录
+                options.add_argument(f'--user-data-dir={user_data_dir}')
+                options.add_argument(f'--disk-cache-dir={temp_dir}')
+                
+                # 创建 WebDriver
+                service = Service(chromedriver_path)
+                driver = webdriver.Chrome(service=service, options=options)
+                
+                # 测试连接是否正常
+                try:
+                    driver.get('about:blank')
+                    return driver
+                except Exception as e:
+                    logger.warning(f"WebDriver 连接测试失败: {str(e)}")
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    raise
+                    
+            except Exception as e:
+                logger.warning(f"创建 WebDriver 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                # 清理临时目录
+                if temp_dir:
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    except:
+                        pass
+                
+                # 如果不是最后一次尝试，等待后重试
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error("创建 WebDriver 失败，已达到最大重试次数")
+                    return None
+        
+        return None
 
     @staticmethod
     def normalize_domain(url):
@@ -467,33 +480,40 @@ class Monitor:
                     # 使用JavaScript检查页面加载状态，带有超时控制
                     async def wait_for_page_load():
                         try:
-                            # 使用asyncio.wait_for添加超时控制
-                            async with asyncio.timeout(10):
+                            # 使用asyncio.wait_for代替asyncio.timeout
+                            async def check_ready_state():
                                 while True:
-                                    ready_state = driver.execute_script("return document.readyState")
-                                    if ready_state == "complete":
+                                    try:
+                                        ready_state = driver.execute_script("return document.readyState")
+                                        if ready_state == "complete":
+                                            break
+                                        await asyncio.sleep(0.5)  # 减少检查间隔
+                                    except Exception as e:
+                                        logger.warning(f"检查页面状态时出错: {str(e)}")
                                         break
-                                    await asyncio.sleep(0.5)  # 减少检查间隔
+                            
+                            await asyncio.wait_for(check_ready_state(), timeout=10)
                         except asyncio.TimeoutError:
                             logger.warning("等待页面加载完成超时")
-                            pass  # 继续处理，可能页面已经加载了主要内容
+                        except Exception as e:
+                            logger.warning(f"等待页面加载时出错: {str(e)}")
                     
                     await wait_for_page_load()
                     
                 except TimeoutException:
                     logger.warning("等待页面元素超时，尝试继续处理")
-                    # 不直接返回，继续尝试处理页面
                 
                 # 获取页面内容
-                html = driver.page_source
-                html_lower = html.lower()
+                try:
+                    html = driver.page_source
+                    html_lower = html.lower()
+                except Exception as e:
+                    logger.error(f"获取页面内容时出错: {str(e)}")
+                    return ProductStatus.UNKNOWN, None
                 
                 # 记录页面内容用于调试（减少日志大小）
                 content_sample = html[:2000] if len(html) > 2000 else html  # 减少样本大小
                 logger.debug(f"商品页面响应内容示例 ({url}):\n{content_sample}")
-                
-                # 记录找到的关键词
-                found_keywords = []
                 
                 # 检查是否是404页面
                 not_found_indicators = [
@@ -507,33 +527,38 @@ class Monitor:
                 
                 is_404 = False
                 try:
-                    # 使用更快的检查方式
                     async def check_404_status():
                         nonlocal is_404
                         try:
                             # 1. 检查HTTP状态码
-                            status_code = driver.execute_script("return window.performance.getEntries()[0].responseStatus")
-                            if status_code == 404:
-                                is_404 = True
-                                logger.info(f"确认页面返回404 - HTTP状态码为404")
-                                return
+                            try:
+                                status_code = driver.execute_script("return window.performance.getEntries()[0].responseStatus")
+                                if status_code == 404:
+                                    is_404 = True
+                                    logger.info(f"确认页面返回404 - HTTP状态码为404")
+                                    return
+                            except Exception as e:
+                                logger.warning(f"检查HTTP状态码时出错: {str(e)}")
                             
                             # 2. 快速检查URL和标题
-                            current_url = driver.current_url.lower()
-                            title = driver.title.lower()
-                            
-                            if "404" in current_url or "error" in current_url:
-                                is_404 = True
-                                logger.info(f"确认页面返回404 - URL包含错误标识: {current_url}")
-                                return
-                            
-                            if "404" in title or "not found" in title or "error" in title:
-                                is_404 = True
-                                logger.info(f"确认页面返回404 - 页面标题包含错误标识: {title}")
-                                return
+                            try:
+                                current_url = driver.current_url.lower()
+                                title = driver.title.lower()
+                                
+                                if "404" in current_url or "error" in current_url:
+                                    is_404 = True
+                                    logger.info(f"确认页面返回404 - URL包含错误标识: {current_url}")
+                                    return
+                                
+                                if "404" in title or "not found" in title or "error" in title:
+                                    is_404 = True
+                                    logger.info(f"确认页面返回404 - 页面标题包含错误标识: {title}")
+                                    return
+                            except Exception as e:
+                                logger.warning(f"检查URL和标题时出错: {str(e)}")
                             
                             # 3. 快速检查关键元素
-                            async with asyncio.timeout(5):  # 为元素检查添加超时
+                            try:
                                 missing_elements = 0
                                 key_elements = [
                                     "//h1[contains(@class, 'product-title')]",
@@ -552,17 +577,17 @@ class Monitor:
                                             is_404 = True
                                             logger.info(f"确认页面返回404 - 缺失关键元素且包含错误文本")
                                             return
+                            except Exception as e:
+                                logger.warning(f"检查关键元素时出错: {str(e)}")
                         
                         except Exception as e:
-                            logger.warning(f"检查404状态时出错: {str(e)}")
+                            logger.warning(f"404状态检查时出错: {str(e)}")
                     
-                    # 使用超时控制运行404检查
-                    try:
-                        async with asyncio.timeout(8):  # 为整个404检查过程添加超时
-                            await check_404_status()
-                    except asyncio.TimeoutError:
-                        logger.warning("404检查超时")
+                    # 使用wait_for代替timeout
+                    await asyncio.wait_for(check_404_status(), timeout=8)
                 
+                except asyncio.TimeoutError:
+                    logger.warning("404检查超时")
                 except Exception as e:
                     logger.warning(f"404状态检查出错: {str(e)}")
                 
@@ -571,39 +596,45 @@ class Monitor:
                 
                 # 使用更高效的状态检查方式
                 async def check_status():
-                    # 售罄状态
-                    for keyword in Monitor.SOLD_OUT_KEYWORDS:
-                        if keyword.lower() in html_lower:
-                            return ProductStatus.SOLD_OUT, None
-                    
-                    # 即将发售状态
-                    for keyword in Monitor.COMING_SOON_KEYWORDS:
-                        if keyword.lower() in html_lower:
-                            return ProductStatus.COMING_SOON, None
-                    
-                    # 可购买状态
-                    for keyword in Monitor.AVAILABLE_KEYWORDS:
-                        if keyword.lower() in html_lower:
-                            # 快速提取价格
-                            price = None
-                            try:
-                                price_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'price') or contains(text(), '$')]")
-                                for elem in price_elements:
-                                    if '$' in elem.text:
-                                        price = elem.text.strip()
-                                        break
-                            except:
-                                pass
-                            return ProductStatus.IN_STOCK, price
-                    
-                    return ProductStatus.UNKNOWN, None
+                    try:
+                        # 售罄状态
+                        for keyword in Monitor.SOLD_OUT_KEYWORDS:
+                            if keyword.lower() in html_lower:
+                                return ProductStatus.SOLD_OUT, None
+                        
+                        # 即将发售状态
+                        for keyword in Monitor.COMING_SOON_KEYWORDS:
+                            if keyword.lower() in html_lower:
+                                return ProductStatus.COMING_SOON, None
+                        
+                        # 可购买状态
+                        for keyword in Monitor.AVAILABLE_KEYWORDS:
+                            if keyword.lower() in html_lower:
+                                # 快速提取价格
+                                price = None
+                                try:
+                                    price_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'price') or contains(text(), '$')]")
+                                    for elem in price_elements:
+                                        if '$' in elem.text:
+                                            price = elem.text.strip()
+                                            break
+                                except Exception as e:
+                                    logger.warning(f"提取价格时出错: {str(e)}")
+                                return ProductStatus.IN_STOCK, price
+                        
+                        return ProductStatus.UNKNOWN, None
+                    except Exception as e:
+                        logger.warning(f"状态检查时出错: {str(e)}")
+                        return ProductStatus.UNKNOWN, None
                 
-                # 使用超时控制运行状态检查
+                # 使用wait_for代替timeout
                 try:
-                    async with asyncio.timeout(5):  # 为状态检查添加超时
-                        return await check_status()
+                    return await asyncio.wait_for(check_status(), timeout=5)
                 except asyncio.TimeoutError:
                     logger.warning("状态检查超时")
+                    return ProductStatus.UNKNOWN, None
+                except Exception as e:
+                    logger.warning(f"状态检查出错: {str(e)}")
                     return ProductStatus.UNKNOWN, None
                 
             except TimeoutException:
@@ -616,8 +647,8 @@ class Monitor:
                 if driver:
                     try:
                         driver.quit()
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"关闭WebDriver时出错: {str(e)}")
                     
         except Exception as e:
             logger.error(f"检查商品状态时出错 ({url}): {str(e)}")
@@ -626,8 +657,8 @@ class Monitor:
             if driver:
                 try:
                     driver.quit()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"关闭WebDriver时出错: {str(e)}")
             return ProductStatus.UNKNOWN, None
 
     async def check_all_items(self) -> list:
