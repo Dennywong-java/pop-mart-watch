@@ -37,7 +37,7 @@ class DiscordBot(discord.Client):
     def setup_commands(self):
         """设置斜杠命令"""
         # 清除现有命令
-        self.tree.clear_commands()
+        self.tree.clear_commands(guild=discord.Object(id=self.config.discord.guild_id))
         
         @self.tree.command(
             name="watch",
