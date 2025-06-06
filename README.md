@@ -38,7 +38,7 @@ cd pop-mart-watch
 
 ```bash
 # 复制示例配置文件
-cp config.example.yaml config.yaml
+cp config.yaml.example config.yaml
 
 # 编辑配置文件
 nano config.yaml
@@ -47,6 +47,7 @@ nano config.yaml
 需要配置的重要项目：
 - `discord.token`: Discord 机器人令牌
 - `discord.channel_id`: 通知消息发送的频道 ID
+- `discord.guild_id`: Discord 服务器 ID
 
 ### 4. 运行部署脚本
 
@@ -84,15 +85,25 @@ sudo systemctl restart popmart-watch
 sudo systemctl stop popmart-watch
 ```
 
-### 6. 监控商品
+### 6. 使用 Discord 命令
 
-使用 Discord 命令管理监控商品：
+机器人使用斜杠命令系统，支持以下命令：
 
-```
-!add https://www.popmart.com/us/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll
-!remove 578
-!list
-```
+- `/add <url> <name>` - 添加商品到监控列表
+  - `url`: 商品页面的 URL
+  - `name`: 商品名称（用于显示在通知中）
+  
+  示例：
+  ```
+  /add https://www.popmart.com/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll LABUBU娃娃
+  ```
+
+- `/remove <url>` - 从监控列表中移除商品
+  - `url`: 要移除的商品 URL
+
+- `/list` - 显示所有正在监控的商品
+
+- `/status` - 显示机器人状态
 
 ## 故障排除
 
@@ -114,8 +125,8 @@ tail -f logs/service.log
 ### 2. 内存使用过高
 
 服务配置了以下资源限制：
-- 内存限制：1GB
-- CPU限制：最多使用50%
+- 内存限制：512MB
+- CPU限制：最多使用30%
 
 如果需要调整限制，编辑服务文件：
 ```bash

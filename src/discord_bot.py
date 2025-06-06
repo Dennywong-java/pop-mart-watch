@@ -37,10 +37,14 @@ class DiscordBot(discord.Client):
     def setup_commands(self):
         """设置斜杠命令"""
         @self.tree.command(
-            name="watch",
+            name="add",
             description="添加商品到监控列表"
         )
-        async def watch(interaction: discord.Interaction, url: str, name: str):
+        @app_commands.describe(
+            url="商品页面的URL",
+            name="商品名称（用于显示在通知中）"
+        )
+        async def add(interaction: discord.Interaction, url: str, name: str):
             try:
                 # 验证 URL
                 if not any(domain in url for domain in self.config.monitor.allowed_domains):
@@ -70,10 +74,13 @@ class DiscordBot(discord.Client):
                 await interaction.response.send_message(f"添加监控商品时出错: {str(e)}")
         
         @self.tree.command(
-            name="unwatch",
+            name="remove",
             description="从监控列表中移除商品"
         )
-        async def unwatch(interaction: discord.Interaction, url: str):
+        @app_commands.describe(
+            url="要移除的商品URL"
+        )
+        async def remove(interaction: discord.Interaction, url: str):
             try:
                 success = await self.monitor.remove_monitored_item(url)
                 if success:
