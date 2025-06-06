@@ -1,19 +1,26 @@
 """
 监控模块，负责检查商品可用性
 """
-import asyncio
+import os
 import logging
+import asyncio
 from typing import Optional, Dict, List
 import aiohttp
 from bs4 import BeautifulSoup
 from src.config import config
 import json
 import re
-import os
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 logger = logging.getLogger(__name__)
 
-class ProductMonitor:
+class Monitor:
     """
     商品监控类
     负责检查商品页面的可用性状态
@@ -21,18 +28,6 @@ class ProductMonitor:
     
     # 监控项目文件路径
     MONITORED_ITEMS_FILE = 'monitored_items.json'
-    
-    # POPMART 特定的类名
-    POPMART_CLASSES = {
-        'add_button': [
-            'index_usBtn__2KlEx',
-            'index_btnFull__F7k90'
-        ],
-        'soldout_button': [
-            'index_disabled__',  # 禁用状态的类名
-            'index_disabledColorBtn__'  # 禁用颜色的类名
-        ]
-    }
     
     # 可购买状态的关键词
     AVAILABLE_KEYWORDS = [
@@ -44,7 +39,9 @@ class ProductMonitor:
         'checkout',
         'in stock',
         'add to shopping bag',
-        'add to my bag'
+        'add to my bag',
+        'Add to Cart',
+        'BUY NOW'
     ]
     
     # 售罄状态的关键词
@@ -52,54 +49,40 @@ class ProductMonitor:
         'SOLD OUT',
         'sold out',
         'out of stock',
+        'notify me when available',
+        'NOTIFY ME WHEN AVAILABLE',
         'currently unavailable',
         'not available',
-        'notify me when available',
-        'coming soon',
-        'temporarily unavailable',
-        'notify me',
-        'email when available'
+        'Item Unavailable',
+        'item unavailable',
+        'Unavailable',
+        'Item unavailable'
     ]
 
     @staticmethod
     def parse_product_url(url: str) -> Dict[str, str]:
-        """
-        从URL中解析产品信息
-        
-        Args:
-            url: 商品URL
-            
-        Returns:
-            Dict[str, str]: 包含产品ID和名称的字典
-        """
+        """从URL中解析产品信息"""
         try:
-            # 匹配 /products/{id}/{name} 格式
             pattern = r'/products/(\d+)/([^/]+)'
             match = re.search(pattern, url)
             if match:
                 product_id = match.group(1)
-                product_name = match.group(2).replace('-', ' ')
+                product_name = match.group(2).replace('-', ' ').title()
                 return {
                     'id': product_id,
                     'name': product_name,
                     'url': url
                 }
-            return {}
         except Exception as e:
-            logger.error(f"Error parsing product URL {url}: {str(e)}")
-            return {}
+            logger.error(f"解析产品URL时出错: {e}")
+        return {}
 
     @staticmethod
     def load_monitored_items() -> List[Dict[str, str]]:
-        """
-        加载监控项目列表
-        
-        Returns:
-            List[Dict[str, str]]: 监控项目列表
-        """
+        """加载监控项目列表"""
         try:
-            if os.path.exists(ProductMonitor.MONITORED_ITEMS_FILE):
-                with open(ProductMonitor.MONITORED_ITEMS_FILE, 'r', encoding='utf-8') as f:
+            if os.path.exists(Monitor.MONITORED_ITEMS_FILE):
+                with open(Monitor.MONITORED_ITEMS_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
             return []
         except Exception as e:
@@ -108,17 +91,9 @@ class ProductMonitor:
 
     @staticmethod
     def save_monitored_items(items: List[Dict[str, str]]) -> bool:
-        """
-        保存监控项目列表
-        
-        Args:
-            items: 监控项目列表
-            
-        Returns:
-            bool: 是否保存成功
-        """
+        """保存监控项目列表"""
         try:
-            with open(ProductMonitor.MONITORED_ITEMS_FILE, 'w', encoding='utf-8') as f:
+            with open(Monitor.MONITORED_ITEMS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(items, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
@@ -126,305 +101,220 @@ class ProductMonitor:
             return False
 
     @staticmethod
-    def add_monitored_item(url: str) -> bool:
-        """
-        添加监控项目
-        
-        Args:
-            url: 商品URL
-            
-        Returns:
-            bool: 是否添加成功
-        """
+    async def add_monitored_item(url: str) -> bool:
+        """添加监控项目"""
         try:
-            # 解析URL
-            product_info = ProductMonitor.parse_product_url(url)
+            product_info = Monitor.parse_product_url(url)
             if not product_info:
                 logger.error(f"Invalid product URL: {url}")
                 return False
             
-            # 加载现有项目
-            items = ProductMonitor.load_monitored_items()
-            
-            # 检查是否已存在
+            items = Monitor.load_monitored_items()
             if any(item['id'] == product_info['id'] for item in items):
                 logger.warning(f"Product {product_info['id']} already monitored")
                 return False
             
-            # 添加新项目
             items.append(product_info)
-            
-            # 保存更新后的列表
-            return ProductMonitor.save_monitored_items(items)
+            return Monitor.save_monitored_items(items)
         except Exception as e:
             logger.error(f"Error adding monitored item: {str(e)}")
             return False
 
     @staticmethod
-    def remove_monitored_item(product_id: str) -> bool:
-        """
-        移除监控项目
-        
-        Args:
-            product_id: 产品ID
-            
-        Returns:
-            bool: 是否移除成功
-        """
+    async def remove_monitored_item(url: str) -> bool:
+        """移除监控项目"""
         try:
-            # 加载现有项目
-            items = ProductMonitor.load_monitored_items()
-            
-            # 移除指定项目
-            original_length = len(items)
-            items = [item for item in items if item['id'] != product_id]
-            
-            # 如果列表长度没变，说明没找到要删除的项目
-            if len(items) == original_length:
-                logger.warning(f"Product {product_id} not found in monitored items")
+            product_info = Monitor.parse_product_url(url)
+            if not product_info:
+                logger.error(f"Invalid product URL: {url}")
                 return False
             
-            # 保存更新后的列表
-            return ProductMonitor.save_monitored_items(items)
+            items = Monitor.load_monitored_items()
+            original_length = len(items)
+            items = [item for item in items if item['id'] != product_info['id']]
+            
+            if len(items) == original_length:
+                logger.warning(f"Product {product_info['id']} not found in monitored items")
+                return False
+            
+            return Monitor.save_monitored_items(items)
         except Exception as e:
             logger.error(f"Error removing monitored item: {str(e)}")
             return False
 
     @staticmethod
-    def _extract_product_id(url: str) -> Optional[str]:
-        """
-        从URL中提取商品ID
-        
-        Args:
-            url: 商品URL
-            
-        Returns:
-            Optional[str]: 商品ID或None
-        """
+    def create_driver():
+        """创建 Chrome WebDriver 实例"""
         try:
-            product_info = ProductMonitor.parse_product_url(url)
-            return product_info.get('id')
+            # 配置 Chrome 选项
+            options = webdriver.ChromeOptions()
+            options.add_argument('--headless')  # 无头模式
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--window-size=1920,1080')
+            options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36')
+            
+            # 为 M1/M2 Mac 特别配置
+            if os.uname().machine == 'arm64':
+                options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            
+            # 安装并获取 ChromeDriver，指定特定版本和架构
+            driver_manager = ChromeDriverManager()
+            if os.uname().machine == 'arm64':
+                driver_manager.driver_cache_path = os.path.join(os.path.expanduser('~'), '.wdm', 'drivers', 'chromedriver', 'mac-arm64')
+            
+            driver_path = driver_manager.install()
+            
+            # 确保 driver_path 指向正确的可执行文件
+            if os.path.isdir(driver_path):
+                possible_paths = [
+                    os.path.join(driver_path, 'chromedriver'),
+                    os.path.join(driver_path, 'chromedriver-mac-arm64', 'chromedriver'),
+                    os.path.join(driver_path, 'chromedriver-mac-x64', 'chromedriver')
+                ]
+                for path in possible_paths:
+                    if os.path.isfile(path) and os.access(path, os.X_OK):
+                        driver_path = path
+                        break
+            
+            logger.info(f"使用 ChromeDriver 路径: {driver_path}")
+            
+            # 创建 Service 对象
+            service = Service(executable_path=driver_path)
+            
+            # 创建 WebDriver
+            driver = webdriver.Chrome(service=service, options=options)
+            return driver
         except Exception as e:
-            logger.error(f"Error extracting product ID from {url}: {str(e)}")
+            logger.error(f"创建 WebDriver 失败: {str(e)}")
             return None
 
     @staticmethod
-    async def get_product_info(url: str, session: aiohttp.ClientSession) -> Dict[str, str]:
-        """
-        获取商品信息，包括图片URL
-        
-        Args:
-            url: 商品URL
-            session: aiohttp会话
-            
-        Returns:
-            Dict[str, str]: 包含商品信息的字典
-        """
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.popmart.com/',
-            'Connection': 'keep-alive',
-            'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"macOS"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        
-        try:
-            # 从HTML获取商品信息
-            async with session.get(url, headers=headers, timeout=30) as html_response:
-                if html_response.status == 200:
-                    html = await html_response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # 尝试从Next.js数据中获取信息
-                    next_data = soup.find('script', id='__NEXT_DATA__')
-                    if next_data:
-                        try:
-                            data = json.loads(next_data.string)
-                            product_data = data.get('props', {}).get('pageProps', {}).get('product', {})
-                            if product_data:
-                                title = product_data.get('title', '') or product_data.get('name', '')
-                                images = product_data.get('images', [])
-                                image_url = images[0].get('url', '') if images else None
-                                
-                                if title and image_url:
-                                    return {
-                                        'image_url': image_url,
-                                        'title': title
-                                    }
-                        except:
-                            pass
-                    
-                    # 尝试从页面元数据中获取信息
-                    title = None
-                    image_url = None
-                    
-                    # 从JSON-LD获取信息
-                    json_ld = soup.find('script', type='application/ld+json')
-                    if json_ld:
-                        try:
-                            data = json.loads(json_ld.string)
-                            if isinstance(data, dict):
-                                title = data.get('name')
-                                image_url = data.get('image')
-                                if isinstance(image_url, list) and image_url:
-                                    image_url = image_url[0]
-                        except:
-                            pass
-                    
-                    # 从 og:title 和 og:image 元标签获取信息
-                    if not title:
-                        og_title = soup.find('meta', property='og:title')
-                        if og_title:
-                            title = og_title.get('content', '').split('-')[0].strip()
-                    
-                    if not image_url:
-                        og_image = soup.find('meta', property='og:image')
-                        if og_image:
-                            image_url = og_image.get('content')
-                    
-                    # 如果没有找到 og 标签，尝试其他方法
-                    if not title:
-                        title_tag = soup.find('h1', class_='product-title') or soup.find('title')
-                        if title_tag:
-                            title = title_tag.text.split('|')[0].strip()
-                    
-                    if not image_url:
-                        img_tags = soup.find_all('img', class_='product-image') or soup.find_all('img', class_='ant-image-img')
-                        if img_tags:
-                            for img in img_tags:
-                                src = img.get('src') or img.get('data-src')
-                                if src and ('1200x1200' in src or 'product' in src.lower()):
-                                    image_url = src
-                                    break
-                    
-                    logger.info(f"Product info from HTML for {url}:")
-                    logger.info(f"Title: {title}")
-                    logger.info(f"Image URL: {image_url}")
-                    
-                    return {
-                        'image_url': image_url,
-                        'title': title
-                    }
-            
-            logger.warning(f"Failed to fetch product info from {url}")
-            return {}
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout while fetching product info from {url}")
-            return {}
-        except Exception as e:
-            logger.error(f"Error getting product info from {url}: {str(e)}")
-            return {}
-    
-    @staticmethod
-    def _text_exists(soup: BeautifulSoup, keywords: list) -> bool:
-        """
-        检查页面中是否存在指定关键词（不区分大小写）
-        
-        Args:
-            soup: BeautifulSoup 对象
-            keywords: 要搜索的关键词列表
-            
-        Returns:
-            bool: 是否找到任何关键词
-        """
-        # 获取页面中所有文本
-        page_text = soup.get_text().lower()
-        
-        # 检查是否存在任何关键词
-        return any(keyword.lower() in page_text for keyword in keywords)
-
-    @staticmethod
-    async def check_product_availability(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
+    async def check_product_availability(url: str, session: aiohttp.ClientSession) -> bool:
         """检查商品是否可购买"""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.popmart.com/',
-                'Connection': 'keep-alive'
-            }
+            driver = Monitor.create_driver()
+            if not driver:
+                return None
             
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    # 1. 快速检查：POPMART 特定的按钮
-                    for element in soup.find_all(['div', 'button']):
-                        element_classes = element.get('class', [])
-                        if not element_classes:
-                            continue
-                            
-                        element_classes = set(element_classes)
-                        button_text = element.get_text(strip=True)
+            try:
+                # 加载页面
+                driver.get(url)
+                
+                # 等待页面加载完成
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # 记录页面内容以便调试
+                logger.debug(f"页面标题: {driver.title}")
+                logger.debug(f"页面 URL: {driver.current_url}")
+                
+                # 检查所有可能的按钮和状态指示器
+                elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'button') or self::button or self::a or self::div or self::span or self::p or self::input]")
+                
+                for element in elements:
+                    try:
+                        text = element.text.strip()
+                        class_name = element.get_attribute("class")
+                        disabled = element.get_attribute("disabled")
                         
-                        # 检查是否是 POPMART 的添加按钮
-                        if any(cls in element_classes for cls in ProductMonitor.POPMART_CLASSES['add_button']):
-                            # 记录找到的按钮信息用于调试
-                            logger.debug(f"找到 POPMART 按钮: 文本='{button_text}', 类名={element_classes}")
-                            
-                            # 检查按钮文本
-                            if button_text in ProductMonitor.AVAILABLE_KEYWORDS:
-                                # 检查是否被禁用
-                                is_disabled = False
-                                for disabled_class in ProductMonitor.POPMART_CLASSES['soldout_button']:
-                                    if any(cls.startswith(disabled_class) for cls in element_classes):
-                                        is_disabled = True
-                                        break
-                                
-                                if not is_disabled and not element.get('disabled'):
-                                    logger.info(f"商品可购买: 找到有效的 POPMART 按钮 '{button_text}'")
-                                    return True
-                                else:
-                                    logger.debug("按钮已禁用")
-                    
-                    # 2. 检查状态标记
-                    status_elements = soup.find_all(['div', 'span'], class_=lambda x: x and ('status' in x.lower() or 'stock' in x.lower()))
-                    for element in status_elements:
-                        text = element.get_text(strip=True)
-                        if any(keyword in text for keyword in ProductMonitor.SOLD_OUT_KEYWORDS):
-                            return False
-                        if any(keyword in text for keyword in ProductMonitor.AVAILABLE_KEYWORDS):
-                            return True
-                    
-                    # 3. 检查所有按钮
-                    buttons = soup.find_all(['button', 'div', 'a'])
-                    for button in buttons:
-                        button_text = button.get_text(strip=True)
-                        if any(keyword in button_text for keyword in ProductMonitor.AVAILABLE_KEYWORDS):
-                            button_class = ' '.join(button.get('class', [])).lower()
-                            if not any(keyword.lower() in button_class for keyword in ProductMonitor.SOLD_OUT_KEYWORDS):
-                                if not (button.get('disabled') or 'disabled' in button_class):
-                                    return True
-                    
-                    # 4. 检查表单
-                    forms = soup.find_all('form')
-                    for form in forms:
-                        form_action = form.get('action', '').lower()
-                        if 'add' in form_action or 'cart' in form_action or 'bag' in form_action:
-                            submit_button = form.find(['button', 'input'], type=['submit', 'button'])
-                            if submit_button and not submit_button.get('disabled'):
+                        # 记录找到的元素信息
+                        if text:
+                            logger.debug(f"找到元素: text='{text}', class={class_name}, disabled={disabled}")
+                        
+                        # 检查可购买状态
+                        if any(keyword.lower() in text.lower() for keyword in Monitor.AVAILABLE_KEYWORDS):
+                            if not disabled and not ('sold-out' in str(class_name).lower()):
+                                logger.info(f"商品可购买: {text}")
                                 return True
-                    
-                    return False
-                else:
-                    logger.error(f"请求失败: {url}, 状态码: {response.status}")
-                    return None
+                        
+                        # 检查售罄状态
+                        if any(keyword.lower() in text.lower() for keyword in Monitor.SOLD_OUT_KEYWORDS):
+                            logger.info(f"商品已售罄: {text}")
+                            return False
+                    except Exception as e:
+                        logger.warning(f"处理元素时出错: {str(e)}")
+                        continue
+                
+                # 检查商品状态的其他指示器
+                status_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'status') or contains(@class, 'stock')]")
+                for element in status_elements:
+                    try:
+                        text = element.text.strip()
+                        logger.debug(f"找到状态元素: {text}")
+                        
+                        if any(keyword.lower() in text.lower() for keyword in Monitor.AVAILABLE_KEYWORDS):
+                            logger.info(f"商品可购买（状态元素）: {text}")
+                            return True
+                        
+                        if any(keyword.lower() in text.lower() for keyword in Monitor.SOLD_OUT_KEYWORDS):
+                            logger.info(f"商品已售罄（状态元素）: {text}")
+                            return False
+                    except Exception as e:
+                        logger.warning(f"处理状态元素时出错: {str(e)}")
+                        continue
+                
+                # 如果没有找到明确的状态指示器，记录警告
+                logger.warning("无法确定商品状态: 未找到相关关键词")
+                return None
+                
+            except TimeoutException:
+                logger.error("页面加载超时")
+                return None
+            except Exception as e:
+                logger.error(f"检查商品状态时出错: {str(e)}")
+                return None
+            finally:
+                driver.quit()
+                
         except Exception as e:
-            logger.error(f"检查商品时发生错误 {url}: {str(e)}")
+            logger.error(f"检查商品状态时出错: {str(e)}")
             return None
 
     @staticmethod
-    async def monitor_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
+    async def check_product_availability_with_delay(url: str, session: aiohttp.ClientSession) -> Optional[bool]:
         """带延迟的商品监控"""
-        await asyncio.sleep(config.request_delay)
-        return await ProductMonitor.check_product_availability(url, session) 
+        try:
+            await asyncio.sleep(config.request_delay)
+            return await Monitor.check_product_availability(url, session)
+        except Exception as e:
+            logger.error(f"检查商品状态时出错: {str(e)}")
+            return None
+
+    async def get_product_info(self, url: str, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, str]:
+        """获取商品信息
+        
+        Args:
+            url: 商品URL
+            session: 可选的aiohttp会话
+            
+        Returns:
+            包含商品信息的字典
+        """
+        product_info = self.parse_product_url(url)
+        if not product_info:
+            return {}
+            
+        try:
+            if session is None:
+                async with aiohttp.ClientSession() as new_session:
+                    async with new_session.get(url) as response:
+                        if response.status == 200:
+                            html = await response.text()
+                            soup = BeautifulSoup(html, 'html.parser')
+                            title = soup.title.string if soup.title else product_info['name']
+                            product_info['title'] = title
+            else:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        soup = BeautifulSoup(html, 'html.parser')
+                        title = soup.title.string if soup.title else product_info['name']
+                        product_info['title'] = title
+                        
+            return product_info
+        except Exception as e:
+            logger.error(f"获取商品信息时出错: {e}")
+            return product_info  # 返回基本信息 

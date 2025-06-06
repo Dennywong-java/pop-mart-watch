@@ -76,84 +76,113 @@ def load_config() -> Dict[str, Any]:
 config = load_config()
 
 class Config:
-    """配置管理类"""
-    _instance = None
-    _config: Dict[str, Any] = {}
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(Config, cls).__new__(cls)
-            cls._instance._load_config()
-        return cls._instance
-
-    def _load_config(self):
-        """加载配置文件"""
-        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.yaml')
+    """配置类"""
+    
+    def __init__(self):
+        """初始化配置"""
+        self.discord_token = ""
+        self.discord_channel_id = 0
+        self.discord_guild_id = 0
+        self.check_interval = 60
+        self.request_delay = 1
+        self.allowed_domains = []
+        self.log_level = "INFO"
+        self.log_file = "logs/bot.log"
+        self.log_console = True
         
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                self._config = yaml.safe_load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(f"配置文件未找到：{config_path}")
-        except yaml.YAMLError as e:
-            raise ValueError(f"配置文件格式错误：{str(e)}")
+        # 加载配置前先设置基本日志
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[logging.StreamHandler()]
+        )
         
-        self._setup_logging()
-
-    def _setup_logging(self):
+        self.load_config()
+        
+        # 加载配置后更新日志设置
+        self.setup_logging()
+        
+    def setup_logging(self):
         """设置日志配置"""
-        log_config = self._config.get('logging', {})
-        log_level = getattr(logging, log_config.get('level', 'INFO'))
-        log_file = log_config.get('file', 'logs/bot.log')
-        console_output = log_config.get('console', True)
-
         # 创建日志目录
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-
-        # 配置日志
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+        
+        # 获取日志级别
+        log_level = getattr(logging, self.log_level.upper(), logging.INFO)
+        
+        # 清除现有的处理器
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        # 设置新的处理器
+        handlers = []
+        
+        # 文件处理器
+        file_handler = logging.FileHandler(self.log_file)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+        handlers.append(file_handler)
+        
+        # 控制台处理器
+        if self.log_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            ))
+            handlers.append(console_handler)
+        
+        # 应用配置
         logging.basicConfig(
             level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler() if console_output else logging.NullHandler()
-            ]
+            handlers=handlers
         )
-
-    @property
-    def discord_token(self) -> str:
-        """获取 Discord 令牌"""
-        return self._config['discord']['token']
-
-    @property
-    def discord_channel_id(self) -> int:
-        """获取 Discord 频道 ID"""
-        return self._config['discord']['channel_id']
-
-    @property
-    def command_prefix(self) -> str:
-        """获取命令前缀"""
-        return self._config['discord']['command_prefix']
-
-    @property
-    def check_interval(self) -> int:
-        """获取检查间隔时间"""
-        return self._config['monitor']['check_interval']
-
-    @property
-    def request_delay(self) -> int:
-        """获取请求延迟时间"""
-        return self._config['monitor']['request_delay']
-
-    @property
-    def allowed_domains(self) -> list:
-        """获取允许的域名列表"""
-        return self._config['monitor']['allowed_domains']
-
-    @property
-    def storage_file(self) -> str:
-        """获取存储文件路径"""
-        return self._config['storage']['data_file']
+        
+        # 设置 discord.py 的日志级别为 DEBUG
+        logging.getLogger('discord').setLevel(logging.DEBUG)
+        logging.getLogger('discord.http').setLevel(logging.DEBUG)
+        logging.getLogger('discord.gateway').setLevel(logging.DEBUG)
+        
+        logger.info("日志配置已更新")
+        
+    def load_config(self):
+        """加载配置文件"""
+        try:
+            # 首先尝试加载 config.yaml
+            config_file = 'config.yaml'
+            if not os.path.exists(config_file):
+                # 如果不存在，尝试加载 config.example.yaml
+                config_file = 'config.example.yaml'
+                if not os.path.exists(config_file):
+                    raise FileNotFoundError("未找到配置文件")
+            
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+            
+            # Discord 配置
+            discord_config = config_data.get('discord', {})
+            self.discord_token = discord_config.get('token', "")
+            self.discord_channel_id = discord_config.get('channel_id', 0)
+            self.discord_guild_id = discord_config.get('guild_id', 0)
+            
+            # 监控配置
+            monitor_config = config_data.get('monitor', {})
+            self.check_interval = monitor_config.get('check_interval', 60)
+            self.request_delay = monitor_config.get('request_delay', 1)
+            self.allowed_domains = monitor_config.get('allowed_domains', [])
+            
+            # 日志配置
+            logging_config = config_data.get('logging', {})
+            self.log_level = logging_config.get('level', "INFO")
+            self.log_file = logging_config.get('file', "logs/bot.log")
+            self.log_console = logging_config.get('console', True)
+            
+            logger.info("配置加载成功")
+            
+        except Exception as e:
+            logger.error(f"加载配置文件时出错: {str(e)}")
+            raise
 
 # 创建全局配置实例
 config = Config() 
