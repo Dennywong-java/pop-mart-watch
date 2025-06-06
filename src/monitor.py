@@ -496,18 +496,60 @@ class Monitor:
                 ]
                 
                 is_404 = False
-                for indicator in not_found_indicators:
-                    if indicator in html_lower:
-                        # 进一步验证是否真的是 404
-                        try:
-                            # 检查是否存在 404 特定的元素或内容
-                            error_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '404') or contains(@class, '404') or contains(@id, '404')]")
-                            if error_elements:
+                try:
+                    # 1. 检查HTTP状态码
+                    status_code = driver.execute_script("return window.performance.getEntries()[0].responseStatus")
+                    if status_code == 404:
+                        is_404 = True
+                        logger.info(f"确认页面返回404 - HTTP状态码为404")
+                    
+                    if not is_404:
+                        # 2. 检查URL是否被重定向到错误页面
+                        current_url = driver.current_url.lower()
+                        if "404" in current_url or "error" in current_url:
+                            is_404 = True
+                            logger.info(f"确认页面返回404 - URL包含错误标识: {current_url}")
+                    
+                    if not is_404:
+                        # 3. 检查页面标题
+                        title = driver.title.lower()
+                        if "404" in title or "not found" in title or "error" in title:
+                            is_404 = True
+                            logger.info(f"确认页面返回404 - 页面标题包含错误标识: {title}")
+                    
+                    if not is_404:
+                        # 4. 检查关键元素是否存在
+                        product_elements = {
+                            "商品标题": "//h1[contains(@class, 'product-title')]",
+                            "商品价格": "//*[contains(@class, 'price')]",
+                            "商品描述": "//*[contains(@class, 'product-description')]",
+                            "添加购物车按钮": "//button[contains(@class, 'add-to-cart')]"
+                        }
+                        
+                        missing_elements = 0
+                        for element_name, xpath in product_elements.items():
+                            if not driver.find_elements(By.XPATH, xpath):
+                                missing_elements += 1
+                                logger.debug(f"未找到关键元素: {element_name}")
+                        
+                        # 如果缺失超过3个关键元素，可能是404页面
+                        if missing_elements >= 3:
+                            # 5. 进一步确认是否包含404相关文本
+                            page_text = driver.page_source.lower()
+                            error_count = 0
+                            for indicator in not_found_indicators:
+                                if indicator.lower() in page_text:
+                                    error_count += 1
+                            
+                            # 只有同时满足缺失关键元素和包含错误文本才判定为404
+                            if error_count > 0:
                                 is_404 = True
-                                logger.info(f"确认页面返回404 - 找到404元素: {[elem.get_attribute('outerHTML') for elem in error_elements]}")
-                                break
-                        except Exception as e:
-                            logger.warning(f"检查404元素时出错: {str(e)}")
+                                logger.info(f"确认页面返回404 - 缺失{missing_elements}个关键元素且包含{error_count}个错误文本")
+                
+                except Exception as e:
+                    logger.warning(f"检查404状态时出错: {str(e)}")
+                    # 出错时不要轻易判定为404
+                    is_404 = False
                 
                 if is_404:
                     return ProductStatus.OFF_SHELF, None
