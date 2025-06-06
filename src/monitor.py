@@ -149,6 +149,12 @@ class Monitor:
         try:
             # 配置 Chrome 选项
             options = webdriver.ChromeOptions()
+            
+            # 设置 Chrome 二进制文件路径
+            chrome_binary = os.getenv('CHROME_BINARY', '/usr/bin/google-chrome')
+            if os.path.exists(chrome_binary):
+                options.binary_location = chrome_binary
+            
             options.add_argument('--headless=new')  # 使用新的无头模式
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
@@ -182,7 +188,8 @@ class Monitor:
             
             for attempt in range(max_retries):
                 try:
-                    driver = webdriver.Chrome(options=options)
+                    service = Service()
+                    driver = webdriver.Chrome(service=service, options=options)
                     driver.set_page_load_timeout(30)
                     driver.set_script_timeout(30)
                     return driver
