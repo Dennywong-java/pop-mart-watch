@@ -30,8 +30,6 @@ class DiscordBot(discord.Client):
         self.config = config
         self.tree = app_commands.CommandTree(self)
         self.monitor = Monitor()
-        self.monitored_items = {}
-        self.load_monitored_items()
         
         # 注册命令
         self.setup_commands()
@@ -42,7 +40,7 @@ class DiscordBot(discord.Client):
             name="watch",
             description="添加商品到监控列表"
         )
-        async def watch(interaction: discord.Interaction, url: str, name: str):
+        async def watch(interaction: discord.Interaction, url: str):
             try:
                 # 验证 URL
                 if not any(domain in url for domain in self.config.monitor.allowed_domains):
@@ -51,16 +49,34 @@ class DiscordBot(discord.Client):
                     )
                     return
                 
-                # 添加到监控列表
-                self.monitored_items[url] = {
-                    'name': name,
-                    'url': url,
-                    'last_status': None
-                }
-                self.save_monitored_items()
+                # 获取商品信息
+                async with aiohttp.ClientSession() as session:
+                    product_info = await self.monitor.get_product_info(url, session)
                 
-                await interaction.response.send_message(f"已添加商品到监控列表: {name}")
-                logger.info(f"添加商品到监控列表: {name} ({url})")
+                if not product_info:
+                    await interaction.response.send_message("无法获取商品信息，请检查 URL 是否正确")
+                    return
+                
+                # 添加到监控列表
+                success = await self.monitor.add_monitored_item(url, product_info.get('title', product_info['name']))
+                if success:
+                    # 构建嵌入消息
+                    embed = discord.Embed(
+                        title="已添加商品到监控列表",
+                        description=product_info.get('title', product_info['name']),
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(name="商品 ID", value=product_info['id'], inline=True)
+                    embed.add_field(name="状态", value="可购买" if product_info.get('available') else "已售罄", inline=True)
+                    embed.add_field(name="URL", value=url, inline=False)
+                    
+                    if product_info.get('image_url'):
+                        embed.set_thumbnail(url=product_info['image_url'])
+                    
+                    await interaction.response.send_message(embed=embed)
+                    logger.info(f"添加商品到监控列表: {product_info.get('title', product_info['name'])} ({url})")
+                else:
+                    await interaction.response.send_message("添加商品失败，可能已经在监控列表中")
                 
             except Exception as e:
                 logger.error(f"添加监控商品时出错: {str(e)}")
@@ -72,12 +88,10 @@ class DiscordBot(discord.Client):
         )
         async def unwatch(interaction: discord.Interaction, url: str):
             try:
-                if url in self.monitored_items:
-                    name = self.monitored_items[url]['name']
-                    del self.monitored_items[url]
-                    self.save_monitored_items()
-                    await interaction.response.send_message(f"已从监控列表移除商品: {name}")
-                    logger.info(f"从监控列表移除商品: {name} ({url})")
+                success = await self.monitor.remove_monitored_item(url)
+                if success:
+                    await interaction.response.send_message(f"已从监控列表移除商品")
+                    logger.info(f"从监控列表移除商品: {url}")
                 else:
                     await interaction.response.send_message("该商品不在监控列表中")
             except Exception as e:
@@ -92,16 +106,27 @@ class DiscordBot(discord.Client):
             try:
                 await interaction.response.defer()
                 
-                if not self.monitored_items:
+                if not self.monitor.monitored_items:
                     await interaction.followup.send("监控列表为空")
                     return
                 
-                # 构建消息
-                message = "正在监控的商品:\n"
-                for url, item in self.monitored_items.items():
-                    message += f"- {item['name']}\n  {url}\n"
+                # 构建嵌入消息
+                embed = discord.Embed(
+                    title="正在监控的商品",
+                    description=f"共 {len(self.monitor.monitored_items)} 个商品",
+                    color=discord.Color.blue()
+                )
                 
-                await interaction.followup.send(message)
+                # 添加每个商品的信息
+                for url, item in self.monitor.monitored_items.items():
+                    status = "可购买 ✅" if item.get('last_status') else "已售罄 ❌"
+                    embed.add_field(
+                        name=item['name'],
+                        value=f"状态: {status}\n{url}",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed)
                 
             except Exception as e:
                 logger.error(f"显示监控列表时出错: {str(e)}")
@@ -115,7 +140,7 @@ class DiscordBot(discord.Client):
             try:
                 await interaction.response.send_message(
                     f"机器人状态: 正常运行中\n"
-                    f"监控商品数量: {len(self.monitored_items)}\n"
+                    f"监控商品数量: {len(self.monitor.monitored_items)}\n"
                     f"检查间隔: {self.config.monitor.check_interval} 秒"
                 )
             except Exception as e:
@@ -147,47 +172,42 @@ class DiscordBot(discord.Client):
         self.monitor_task = self.loop.create_task(self.monitor_products())
         logger.info("商品监控任务已启动")
     
-    def load_monitored_items(self):
-        """从文件加载监控商品列表"""
-        try:
-            if os.path.exists(self.config.storage.data_file):
-                with open(self.config.storage.data_file, 'r', encoding='utf-8') as f:
-                    self.monitored_items = json.load(f)
-        except Exception as e:
-            logger.error(f"加载监控商品列表时出错: {str(e)}")
-    
-    def save_monitored_items(self):
-        """保存监控商品列表到文件"""
-        try:
-            os.makedirs(os.path.dirname(self.config.storage.data_file), exist_ok=True)
-            with open(self.config.storage.data_file, 'w', encoding='utf-8') as f:
-                json.dump(self.monitored_items, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存监控商品列表时出错: {str(e)}")
-    
     async def monitor_products(self):
         """监控商品状态"""
         while True:
             try:
-                for url, item in self.monitored_items.items():
-                    try:
-                        # 检查商品状态
-                        is_available = await self.monitor.check_product_availability_with_delay(
-                            url, self.config.monitor.request_delay
-                        )
-                        
-                        # 如果状态改变，发送通知
-                        if is_available != item.get('last_status'):
-                            item['last_status'] = is_available
-                            self.save_monitored_items()
+                async with aiohttp.ClientSession() as session:
+                    for url, item in self.monitor.monitored_items.items():
+                        try:
+                            # 获取商品信息
+                            product_info = await self.monitor.get_product_info(url, session)
+                            if not product_info:
+                                continue
                             
-                            status = "可购买" if is_available else "已售罄"
-                            message = f"商品状态更新:\n{item['name']}\n状态: {status}\n{url}"
+                            # 检查商品状态
+                            is_available = product_info.get('available', False)
                             
-                            await self.send_notification(message)
-                            
-                    except Exception as e:
-                        logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
+                            # 如果状态改变，发送通知
+                            if is_available != item.get('last_status'):
+                                item['last_status'] = is_available
+                                self.monitor.save_monitored_items()
+                                
+                                # 构建嵌入消息
+                                embed = discord.Embed(
+                                    title="商品状态更新",
+                                    description=item['name'],
+                                    color=discord.Color.green() if is_available else discord.Color.red()
+                                )
+                                embed.add_field(name="状态", value="可购买 ✅" if is_available else "已售罄 ❌", inline=True)
+                                embed.add_field(name="URL", value=url, inline=False)
+                                
+                                if product_info.get('image_url'):
+                                    embed.set_thumbnail(url=product_info['image_url'])
+                                
+                                await self.send_notification(embed=embed)
+                                
+                        except Exception as e:
+                            logger.error(f"监控商品时出错 {item['name']}: {str(e)}")
                 
                 # 等待下一次检查
                 await asyncio.sleep(self.config.monitor.check_interval)
@@ -196,12 +216,12 @@ class DiscordBot(discord.Client):
                 logger.error(f"监控任务出错: {str(e)}")
                 await asyncio.sleep(60)  # 出错后等待一分钟再继续
     
-    async def send_notification(self, message: str):
+    async def send_notification(self, embed: discord.Embed):
         """发送通知消息到指定频道"""
         try:
             channel = self.get_channel(self.config.discord.channel_id)
             if channel:
-                await channel.send(message)
+                await channel.send(embed=embed)
             else:
                 logger.error(f"无法找到通知频道: {self.config.discord.channel_id}")
         except Exception as e:
@@ -219,8 +239,8 @@ class DiscordBot(discord.Client):
 async def run_bot(config: Config):
     """运行 Discord 机器人"""
     try:
-        async with DiscordBot(config) as bot:
-            await bot.start(config.discord_token)
+        bot = DiscordBot(config)
+        await bot.start(config.discord.token)
     except Exception as e:
         logger.error(f"运行机器人时出错: {str(e)}")
         raise

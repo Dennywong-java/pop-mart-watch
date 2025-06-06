@@ -6,6 +6,7 @@ import yaml
 import logging.config
 from dataclasses import dataclass
 from typing import List, Dict, Any
+from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,30 @@ class Config:
     logging: LoggingConfig
 
     @staticmethod
-    def load(config_path: str = "config.yaml") -> 'Config':
+    def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """深度合并两个字典"""
+        result = deepcopy(base)
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = Config.deep_merge(result[key], value)
+            else:
+                result[key] = deepcopy(value)
+        return result
+
+    @staticmethod
+    def load(config_path: str = "config.yaml", local_config_path: str = "config.local.yaml") -> 'Config':
         """加载配置文件"""
         try:
-            # 读取配置文件
+            # 读取基础配置文件
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
+
+            # 如果存在本地配置文件，读取并合并
+            if os.path.exists(local_config_path):
+                with open(local_config_path, 'r', encoding='utf-8') as f:
+                    local_config_data = yaml.safe_load(f)
+                    if local_config_data:
+                        config_data = Config.deep_merge(config_data, local_config_data)
 
             # 创建配置对象
             discord_config = DiscordConfig(

@@ -88,7 +88,19 @@ class Monitor:
         try:
             if os.path.exists(config.storage.data_file):
                 with open(config.storage.data_file, 'r', encoding='utf-8') as f:
-                    self.monitored_items = json.load(f)
+                    data = json.load(f)
+                    
+                    # 如果数据是列表格式，转换为字典格式
+                    if isinstance(data, list):
+                        self.monitored_items = {}
+                        for item in data:
+                            self.monitored_items[item['url']] = {
+                                'name': item['name'],
+                                'url': item['url'],
+                                'last_status': item.get('last_status')
+                            }
+                    else:
+                        self.monitored_items = data
         except Exception as e:
             logger.error(f"加载监控商品列表时出错: {str(e)}")
             self.monitored_items = {}
@@ -542,37 +554,112 @@ class Monitor:
             return None
 
     async def get_product_info(self, url: str, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, str]:
-        """获取商品信息
-        
-        Args:
-            url: 商品URL
-            session: 可选的aiohttp会话
-            
-        Returns:
-            包含商品信息的字典
-        """
-        product_info = self.parse_product_url(url)
-        if not product_info:
-            return {}
-            
+        """获取商品信息"""
         try:
+            # 解析商品 ID 和名称
+            product_info = self.parse_product_url(url)
+            if not product_info:
+                return {}
+
+            # 检查网络连接
+            if not await self.check_network(url):
+                logger.warning(f"无法连接到服务器: {url}")
+                return product_info
+
+            # 创建或使用现有的会话
+            should_close_session = False
             if session is None:
-                async with aiohttp.ClientSession() as new_session:
-                    async with new_session.get(url) as response:
-                        if response.status == 200:
-                            html = await response.text()
-                            soup = BeautifulSoup(html, 'html.parser')
-                            title = soup.title.string if soup.title else product_info['name']
-                            product_info['title'] = title
-            else:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        soup = BeautifulSoup(html, 'html.parser')
-                        title = soup.title.string if soup.title else product_info['name']
-                        product_info['title'] = title
-                        
+                session = aiohttp.ClientSession()
+                should_close_session = True
+
+            try:
+                # 尝试从 API 获取商品信息
+                api_info = await self._get_product_info_from_api(product_info['id'], session)
+                if api_info:
+                    product_info.update(api_info)
+                    return product_info
+
+                # 如果 API 获取失败，尝试从 HTML 页面获取
+                html_info = await self._get_product_info_from_html(url, session)
+                if html_info:
+                    product_info.update(html_info)
+
+            finally:
+                if should_close_session:
+                    await session.close()
+
             return product_info
+
         except Exception as e:
-            logger.error(f"获取商品信息时出错: {e}")
-            return product_info  # 返回基本信息 
+            logger.error(f"获取商品信息时出错: {str(e)}")
+            return {}
+
+    async def _get_product_info_from_api(self, product_id: str, session: aiohttp.ClientSession) -> Dict[str, str]:
+        """从 API 获取商品信息"""
+        api_urls = [
+            f"https://us.popmart.com/api/v2/products/{product_id}",
+            f"https://shop.popmart.com/api/v2/products/{product_id}"
+        ]
+
+        for api_url in api_urls:
+            try:
+                async with session.get(api_url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            'title': data.get('title'),
+                            'image_url': data.get('image', {}).get('src'),
+                            'available': data.get('available', False)
+                        }
+                    else:
+                        logger.warning(f"从 API 获取商品信息失败: {api_url}, 状态码: {response.status}")
+            except Exception as e:
+                logger.warning(f"从 API 获取商品信息出错: {api_url}, {str(e)}")
+
+        return {}
+
+    async def _get_product_info_from_html(self, url: str, session: aiohttp.ClientSession) -> Dict[str, str]:
+        """从 HTML 页面获取商品信息"""
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+
+                    # 尝试获取商品标题
+                    title = None
+                    title_elem = soup.find('h1', {'class': 'product-title'})
+                    if title_elem:
+                        title = title_elem.text.strip()
+
+                    # 尝试获取商品图片
+                    image_url = None
+                    image_elem = soup.find('img', {'class': 'product-image'})
+                    if image_elem:
+                        image_url = image_elem.get('src')
+
+                    # 检查商品状态
+                    available = False
+                    for keyword in self.AVAILABLE_KEYWORDS:
+                        if keyword.lower() in html.lower():
+                            available = True
+                            break
+
+                    if not available:
+                        for keyword in self.SOLD_OUT_KEYWORDS:
+                            if keyword.lower() in html.lower():
+                                available = False
+                                break
+
+                    return {
+                        'title': title,
+                        'image_url': image_url,
+                        'available': available
+                    }
+                else:
+                    logger.warning(f"从 HTML 获取商品信息失败: {url}, 状态码: {response.status}")
+
+        except Exception as e:
+            logger.warning(f"从 HTML 获取商品信息出错: {url}, {str(e)}")
+
+        return {} 
