@@ -3,19 +3,20 @@ Discord 机器人模块，处理 Discord 相关功能
 """
 import asyncio
 import logging
+import traceback
+from datetime import datetime
+
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import tasks
 import aiohttp
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlparse
 import json
 import os
-import traceback
-from datetime import datetime
 
 from src.config import Config
-from src.monitor import Monitor
+from src.monitor import Monitor, ProductStatus
 
 logger = logging.getLogger(__name__)
 
@@ -258,38 +259,70 @@ class DiscordBot(discord.Client):
         logger.info("商品监控任务已启动")
     
     async def monitor_products(self):
-        """监控商品状态"""
+        """监控商品状态变化并发送通知"""
         while True:
             try:
-                # 检查所有商品状态并获取需要通知的更新
                 notifications = await self.monitor.check_all_items()
                 
-                # 发送所有需要的通知
                 for notification in notifications:
+                    # 生成通知消息
+                    status_messages = {
+                        ProductStatus.IN_STOCK: f"🟢 商品已上架！{f'价格: {notification.price}' if notification.price else ''}",
+                        ProductStatus.SOLD_OUT: "🔴 商品已售罄",
+                        ProductStatus.COMING_SOON: "🟡 商品即将发售",
+                        ProductStatus.OFF_SHELF: "⚫ 商品已下架",
+                        ProductStatus.UNKNOWN: "❓ 商品状态未知"
+                    }
+                    
+                    # 获取商品名称
+                    product_name = notification.url.split('/')[-1].replace('-', ' ')
+                    
+                    # 创建嵌入消息
                     embed = discord.Embed(
-                        title="商品状态更新",
-                        description=notification['name'],
-                        url=notification['url'],
-                        color=self._get_status_color(notification['status'])
+                        title=f"商品状态更新: {product_name}",
+                        description=status_messages.get(notification.new_status, "状态未知"),
+                        url=notification.url,
+                        color=discord.Color.green() if notification.new_status == ProductStatus.IN_STOCK else discord.Color.red()
                     )
                     
-                    embed.add_field(name="状态", value=notification['message'], inline=True)
-                    if notification.get('price'):
-                        embed.add_field(name="价格", value=notification['price'], inline=True)
-                    embed.add_field(name="URL", value=notification['url'], inline=False)
+                    # 添加状态变化信息
+                    embed.add_field(
+                        name="状态变化",
+                        value=f"{notification.old_status.value} → {notification.new_status.value}",
+                        inline=False
+                    )
                     
-                    # 设置图片
-                    if notification.get('icon_url'):
-                        embed.set_thumbnail(url=notification['icon_url'])
+                    # 如果有价格，添加价格信息
+                    if notification.price:
+                        embed.add_field(name="价格", value=notification.price, inline=True)
                     
-                    await self.send_notification(embed=embed)
-                
-                # 等待下一次检查
-                await asyncio.sleep(self.config.monitor.check_interval)
+                    # 添加时间戳
+                    embed.timestamp = datetime.now()
+                    
+                    # 发送通知
+                    for channel_id in self.notification_channels:
+                        try:
+                            channel = self.get_channel(channel_id)
+                            if channel:
+                                await channel.send(embed=embed)
+                            else:
+                                logger.warning(f"找不到频道: {channel_id}")
+                        except Exception as e:
+                            logger.error(f"发送通知到频道 {channel_id} 时出错: {str(e)}")
                 
             except Exception as e:
                 logger.error(f"监控任务出错: {str(e)}")
-                await asyncio.sleep(60)  # 出错后等待一分钟再继续
+                logger.error(traceback.format_exc())
+            
+            # 等待下一次检查
+            try:
+                await asyncio.sleep(self.check_interval)
+            except asyncio.CancelledError:
+                logger.info("监控任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"等待间隔时出错: {str(e)}")
+                await asyncio.sleep(60)  # 发生错误时使用较长的等待时间
     
     async def send_notification(self, embed: discord.Embed):
         """发送通知消息到指定频道"""

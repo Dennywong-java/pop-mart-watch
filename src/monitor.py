@@ -29,6 +29,7 @@ import dns.resolver
 from enum import Enum
 from datetime import datetime
 import traceback
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,14 @@ class ProductStatus(Enum):
     SOLD_OUT = "sold_out"        # 售罄
     COMING_SOON = "coming_soon"  # 即将发售
     OFF_SHELF = "off_shelf"      # 下架
+
+@dataclass
+class Notification:
+    """状态变化通知"""
+    url: str                    # 商品URL
+    old_status: ProductStatus   # 之前的状态
+    new_status: ProductStatus   # 新状态
+    price: Optional[str] = None # 价格（可选）
 
 class Monitor:
     """
